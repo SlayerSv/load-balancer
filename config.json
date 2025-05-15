@@ -1,0 +1,6 @@
+{
+    "backend_urls": ["localhost:8081", "localhost:8082"],
+    "port": "8080",
+    "worker_count": 2,
+    "health_check_interval": 10
+}
