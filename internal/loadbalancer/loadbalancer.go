@@ -1,6 +1,7 @@
 package loadbalancer
 
 import (
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -25,6 +26,11 @@ type Backend struct {
 	URL       *url.URL
 	isHealthy bool
 	mu        sync.Mutex
+}
+
+type ErrorResponse struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
 }
 
 func NewLoadBalancer(backendURLs []string) (*LoadBalancer, error) {
@@ -92,12 +98,12 @@ func (lb *LoadBalancer) healthCheck(b *Backend) {
 	defer b.mu.Unlock()
 	if err != nil || resp != nil && resp.StatusCode != http.StatusOK {
 		if b.isHealthy { // Only log if state changes
-			slog.Warn("Backend is down", "backend", b.URL.String(), "error", err)
+			slog.Warn("Backend is down", "backend_url", b.URL.String(), "error", err)
 		}
 		b.isHealthy = false
 	} else {
 		if !b.isHealthy { // Only log if state changes
-			slog.Info("Backend is up", "backend", b.URL.String())
+			slog.Info("Backend is up", "backend_url", b.URL.String())
 		}
 		b.isHealthy = true
 	}
@@ -105,12 +111,25 @@ func (lb *LoadBalancer) healthCheck(b *Backend) {
 
 func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	backend, err := lb.NextBackend()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
-		slog.Error("No healthy backends available", "path", r.URL.Path)
+	if errors.Is(err, errNoAvailableBackends) {
+		slog.Error("No available backends", "request_url", r.URL.Path)
+		lb.Error(w, r, errNoAvailableBackends.Error(), http.StatusServiceUnavailable)
 		return
 	}
 	proxy := httputil.NewSingleHostReverseProxy(backend.URL)
 	proxy.ServeHTTP(w, r)
-	slog.Info("Request forwarded", "backend", backend.URL.String(), "path", r.URL.Path)
+	slog.Info("Request forwarded", "backend_url", backend.URL.String(), "request_url", r.URL.Path)
+}
+
+func (lb *LoadBalancer) Error(w http.ResponseWriter, r *http.Request, message string, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	errorResponse := ErrorResponse{
+		Code:    code,
+		Message: message,
+	}
+	w.WriteHeader(code)
+	err := json.NewEncoder(w).Encode(errorResponse)
+	if err != nil {
+		slog.Error("Encoding error response", "error", err)
+	}
 }
