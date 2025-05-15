@@ -8,6 +8,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/SlayerSv/load-balancer/internal/config"
@@ -24,8 +25,7 @@ type LoadBalancer struct {
 
 type Backend struct {
 	URL       *url.URL
-	isHealthy bool
-	mu        sync.Mutex
+	isHealthy atomic.Bool
 }
 
 type ErrorResponse struct {
@@ -41,7 +41,9 @@ func NewLoadBalancer(backendURLs []string) (*LoadBalancer, error) {
 		if err != nil {
 			return nil, err
 		}
-		lb.backends = append(lb.backends, &Backend{URL: parsedURL, isHealthy: true})
+		b := &Backend{URL: parsedURL, isHealthy: atomic.Bool{}}
+		b.isHealthy.Store(true)
+		lb.backends = append(lb.backends, b)
 	}
 	return lb, nil
 }
@@ -52,9 +54,7 @@ func (lb *LoadBalancer) NextBackend() (*Backend, error) {
 	for range lb.backends {
 		lb.current = (lb.current + 1) % len(lb.backends)
 		b := lb.backends[lb.current]
-		b.mu.Lock()
-		isHealthy := b.isHealthy
-		b.mu.Unlock()
+		isHealthy := b.isHealthy.Load()
 		if isHealthy {
 			return b, nil
 		}
@@ -66,6 +66,9 @@ func (lb *LoadBalancer) NextBackend() (*Backend, error) {
 func (lb *LoadBalancer) StartHealthChecks() {
 	// Channel to distribute health check tasks
 	tasks := make(chan *Backend, len(lb.backends))
+	client := http.Client{
+		Timeout: time.Second, // Set timeout to 10 seconds
+	}
 
 	// Start worker pool
 	var wg sync.WaitGroup
@@ -74,7 +77,7 @@ func (lb *LoadBalancer) StartHealthChecks() {
 		go func() {
 			defer wg.Done()
 			for b := range tasks {
-				lb.healthCheck(b)
+				lb.healthCheck(client, b)
 			}
 		}()
 	}
@@ -92,20 +95,20 @@ func (lb *LoadBalancer) StartHealthChecks() {
 }
 
 // healthCheck performs a health check on a single backend
-func (lb *LoadBalancer) healthCheck(b *Backend) {
-	resp, err := http.Get(b.URL.String() + "/health")
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if err != nil || resp != nil && resp.StatusCode != http.StatusOK {
-		if b.isHealthy { // Only log if state changes
+func (lb *LoadBalancer) healthCheck(client http.Client, b *Backend) {
+	resp, err := client.Get(b.URL.String() + "/health")
+	b.isHealthy.Load()
+
+	if err != nil || resp.StatusCode != http.StatusOK {
+		wasHealthy := b.isHealthy.Swap(false)
+		if wasHealthy { // Only log if state changes
 			slog.Warn("Backend is down", "backend_url", b.URL.String(), "error", err)
 		}
-		b.isHealthy = false
 	} else {
-		if !b.isHealthy { // Only log if state changes
+		wasHealthy := b.isHealthy.Swap(true)
+		if !wasHealthy { // Only log if state changes
 			slog.Info("Backend is up", "backend_url", b.URL.String())
 		}
-		b.isHealthy = true
 	}
 }
 
