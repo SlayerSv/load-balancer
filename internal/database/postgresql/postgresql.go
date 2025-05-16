@@ -1,0 +1,184 @@
+package postgresql
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"os"
+
+	"github.com/SlayerSv/load-balancer/internal/apperrors"
+	"github.com/SlayerSv/load-balancer/internal/models"
+
+	"github.com/lib/pq"
+)
+
+type PostgreSQL struct {
+	db *sql.DB
+}
+
+func NewPostgresDB() (*PostgreSQL, error) {
+	host, ok := os.LookupEnv("POSTGRES_HOST")
+	if !ok {
+		return nil, fmt.Errorf("missing POSTGRES_HOST env variable")
+	}
+	port, ok := os.LookupEnv("POSTGRES_PORT")
+	if !ok {
+		return nil, fmt.Errorf("missing POSTGRES_PORT env variable")
+	}
+	user, ok := os.LookupEnv("POSTGRES_USER")
+	if !ok {
+		return nil, fmt.Errorf("missing POSTGRES_USER env variable")
+	}
+	pass, ok := os.LookupEnv("POSTGRES_PASSWORD")
+	if !ok {
+		return nil, fmt.Errorf("missing POSTGRES_PASSWORD env variable")
+	}
+	dbname, ok := os.LookupEnv("POSTGRES_DB")
+	if !ok {
+		return nil, fmt.Errorf("missing POSTGRES_DB env variable")
+	}
+	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		host, port, user, pass, dbname)
+	db, err := sql.Open("postgres", connStr)
+	if err != nil {
+		return nil, err
+	}
+	return &PostgreSQL{db}, nil
+}
+
+func (p *PostgreSQL) GetClient(ctx context.Context, clientAPIKey string) (models.Client, error) {
+	var client models.Client
+	row := p.db.QueryRowContext(ctx,
+		`SELECT * FROM clients
+		WHERE
+			api_key = $1;
+		`,
+		clientAPIKey,
+	)
+	err := row.Scan(&client)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return client, apperrors.ErrNotFound
+		}
+		return client, fmt.Errorf("%w: %w", apperrors.ErrInternal, err)
+	}
+	return client, nil
+}
+
+func (p *PostgreSQL) AddClient(ctx context.Context, client models.Client) (models.Client, error) {
+	var newClient models.Client
+	row := p.db.QueryRowContext(ctx,
+		`INSERT INTO clients
+			(client_id, api_key, capacity, rate_per_sec)
+		VALUES
+			($1, $2, $3, $4)
+		RETURNING *;
+		`,
+		client.ClientID, client.APIKey, client.Capacity, client.RatePerSec,
+	)
+	err := row.Scan(&newClient)
+	if err != nil {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) {
+			switch pqErr.Code {
+			case "23505":
+				return newClient, fmt.Errorf("%w: %w", apperrors.ErrAlreadyExists, err)
+			default:
+				return newClient, fmt.Errorf("%w: %w", apperrors.ErrInternal, err)
+			}
+		}
+	}
+	return newClient, nil
+}
+
+func (p *PostgreSQL) UpdateClient(ctx context.Context, client models.Client) (models.Client, error) {
+	var updatedClient models.Client
+	row := p.db.QueryRowContext(ctx,
+		`UPDATE items
+		SET
+			capacity = $1,
+			rate_per_sec = $2
+			tokens = CASE
+				WHEN $1 < tokens
+				THEN $1
+				ELSE tokens
+				END
+		WHERE id = $3;
+		`,
+		client.Capacity, client.RatePerSec, client.ClientID,
+	)
+	err := row.Scan(&updatedClient)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return client, apperrors.ErrNotFound
+		}
+		return updatedClient, fmt.Errorf("%w: %w", apperrors.ErrInternal, err)
+	}
+	return updatedClient, nil
+}
+
+func (p *PostgreSQL) DeleteClient(ctx context.Context, clientID string) (models.Client, error) {
+	var deletedClient models.Client
+	row := p.db.QueryRowContext(ctx,
+		`DELETE FROM clients
+		WHERE
+			client_id = $1
+		RETURNING *;
+		`,
+		clientID,
+	)
+	err := row.Scan(&deletedClient)
+	if err != nil {
+		return deletedClient, fmt.Errorf("%w: %w", apperrors.ErrInternal, err)
+	}
+	return deletedClient, nil
+}
+
+func (p *PostgreSQL) UpdateTokens(ctx context.Context, client models.Client) (models.Client, error) {
+	var updatedClient models.Client
+	row := p.db.QueryRowContext(ctx,
+		`UPDATE clients
+		SET
+			tokens = $1, last_refill = $2
+		WHERE
+			client_id = $3
+		RETURNING *;
+		`,
+		client.Tokens, client.LastRefill, client.ClientID,
+	)
+	err := row.Scan(&updatedClient)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return updatedClient, apperrors.ErrNotFound
+		}
+		return updatedClient, fmt.Errorf("%w: %w", apperrors.ErrInternal, err)
+	}
+	return updatedClient, nil
+}
+
+func (p *PostgreSQL) UpdateManyTokens(ctx context.Context, clients []models.Client) error {
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, "UPDATE clients SET tokens = $1, last_refill = $2 WHERE client_id = $3")
+	if err != nil {
+		return fmt.Errorf("preparing statement for tx updates: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, c := range clients {
+		_, err = stmt.ExecContext(ctx, c.Tokens, c.LastRefill, c.ClientID)
+		if err != nil {
+			return fmt.Errorf("updating client %s: %w", c.ClientID, err)
+		}
+	}
+	err = tx.Commit()
+	if err != nil {
+		return fmt.Errorf("commiting transaction: %w", err)
+	}
+	return nil
+}
