@@ -90,19 +90,18 @@ func (lb *LoadBalancer) StartHealthChecks() {
 
 // healthCheck performs a health check on a single backend
 func (lb *LoadBalancer) healthCheck(client http.Client, b *Backend) {
+	resp, err := client.Get(b.URL.String() + "/health")
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	resp, err := client.Get(b.URL.String() + "/health")
-
 	if err != nil || resp.StatusCode != http.StatusOK {
-		if b.isHealthy { // Only log if state changes
-			lb.Log.Warn("Backend is down", "backend_url", b.URL.String(), "error", err)
+		if b.isHealthy {
 			b.isHealthy = false
+			lb.Log.Warn("Backend is down", "backend_url", b.URL.String(), "error", err)
 		}
 	} else {
-		if b.isHealthy { // Only log if state changes
-			lb.Log.Info("Backend is up", "backend_url", b.URL.String())
+		if b.isHealthy {
 			b.isHealthy = true
+			lb.Log.Info("Backend is up", "backend_url", b.URL.String())
 		}
 	}
 }
