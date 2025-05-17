@@ -12,6 +12,7 @@ import (
 	"github.com/SlayerSv/load-balancer/internal/loadbalancer"
 	"github.com/SlayerSv/load-balancer/internal/logger"
 	"github.com/SlayerSv/load-balancer/internal/ratelimiter"
+	"github.com/SlayerSv/load-balancer/pkg"
 )
 
 type App struct {
@@ -22,10 +23,6 @@ type App struct {
 	Log           logger.Logger
 	nextRequestID atomic.Int64
 }
-
-type IDString string
-
-const RequestID IDString = "request_id"
 
 func NewApp(cfg *config.Config, DB database.DataBase, LB *loadbalancer.LoadBalancer, RL ratelimiter.RateLimiter, log logger.Logger) *App {
 	return &App{
@@ -47,7 +44,7 @@ func (app *App) Middleware(next http.Handler) http.Handler {
 			}
 		}()
 		ID := app.nextRequestID.Add(1)
-		ctx := context.WithValue(r.Context(), RequestID, ID)
+		ctx := context.WithValue(r.Context(), pkg.RequestID, ID)
 		r = r.Clone(ctx)
 		app.Log.Info("Incoming request", "method", "request_id", ID, r.Method, "path", r.URL.Path, "remote_address", r.RemoteAddr)
 		next.ServeHTTP(w, r)

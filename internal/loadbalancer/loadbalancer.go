@@ -1,6 +1,7 @@
 package loadbalancer
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httputil"
@@ -12,6 +13,7 @@ import (
 	"github.com/SlayerSv/load-balancer/internal/apperrors"
 	"github.com/SlayerSv/load-balancer/internal/config"
 	"github.com/SlayerSv/load-balancer/internal/logger"
+	"github.com/SlayerSv/load-balancer/pkg"
 )
 
 var errNoAvailableBackends = errors.New("no available backends")
@@ -57,32 +59,42 @@ func (lb *LoadBalancer) NextBackend() (*Backend, error) {
 }
 
 // StartHealthChecks launches a worker pool for periodic backend health checks
-func (lb *LoadBalancer) StartHealthChecks() {
+func (lb *LoadBalancer) StartHealthChecks(ctx context.Context, wg *sync.WaitGroup) {
 	// Channel to distribute health check tasks
 	tasks := make(chan *Backend, len(lb.backends))
 	client := http.Client{
-		Timeout: time.Second, // Set timeout to 10 seconds
+		Timeout: time.Second,
 	}
-
-	// Start worker pool
-	var wg sync.WaitGroup
-	for i := 0; i < lb.cfg.WorkerCount; i++ {
+	for range lb.cfg.WorkerCount {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for b := range tasks {
-				lb.healthCheck(client, b)
+			for {
+				select {
+				case b := <-tasks:
+					lb.healthCheck(client, b)
+				case <-ctx.Done():
+					return
+				}
 			}
 		}()
 	}
 
+	wg.Add(1)
 	// Start ticker to periodically queue health checks
 	go func() {
+		defer wg.Done()
 		ticker := time.NewTicker(time.Duration(lb.cfg.HealthCheckInterval) * time.Second)
 		defer ticker.Stop()
-		for range ticker.C {
-			for _, b := range lb.backends {
-				tasks <- b
+		for {
+			select {
+			case <-ticker.C:
+				for _, b := range lb.backends {
+					tasks <- b
+				}
+			case <-ctx.Done():
+				close(tasks)
+				return
 			}
 		}
 	}()
@@ -113,6 +125,6 @@ func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	proxy := httputil.NewSingleHostReverseProxy(backend.URL)
-	lb.Log.Info("Forwarding request", "backend_url", backend.URL.Path)
+	lb.Log.Info("Forwarding request", pkg.RequestID, r.Context().Value(pkg.RequestID), "backend_url", backend.URL.Path)
 	proxy.ServeHTTP(w, r)
 }

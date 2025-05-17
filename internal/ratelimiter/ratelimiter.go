@@ -22,12 +22,17 @@ type RateLimiterBucket struct {
 	Log           logger.Logger
 	clientHandler http.Handler
 	mu            sync.Mutex
+	ctx           context.Context
+	wg            *sync.WaitGroup
 }
 
 // NewRateLimiter creates a new RateLimiter with a database connection
-func NewRateLimiterBucket(DB database.DataBase, cache clientcache.ClientCache, log logger.Logger) *RateLimiterBucket {
-	rl := &RateLimiterBucket{DB: DB, cache: cache, Log: log}
+func NewRateLimiterBucket(ctx context.Context, wg *sync.WaitGroup, DB database.DataBase, cache clientcache.ClientCache, log logger.Logger) *RateLimiterBucket {
+	rl := &RateLimiterBucket{DB: DB, cache: cache, Log: log, ctx: ctx, wg: wg}
 	rl.clientHandler = rl.NewClientHandler()
+	rl.AddTokensInterval(time.Second)
+	rl.SaveStateInterval(time.Second * 10)
+	rl.RemoveStaleInterval(time.Second * 60)
 	return rl
 }
 
@@ -63,31 +68,52 @@ func (rl *RateLimiterBucket) AllowRequest(APIKey string) (bool, error) {
 }
 
 func (rl *RateLimiterBucket) AddTokensInterval(interval time.Duration) {
+	rl.wg.Add(1)
+	defer rl.wg.Done()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	for range ticker.C {
-		rl.mu.Lock()
-		rl.cache.AddTokensToAll()
-		rl.mu.Unlock()
+	for {
+		select {
+		case <-ticker.C:
+			rl.mu.Lock()
+			rl.cache.AddTokensToAll()
+			rl.mu.Unlock()
+		case <-rl.ctx.Done():
+			return
+		}
 	}
 }
 
 func (rl *RateLimiterBucket) SaveStateInterval(interval time.Duration) {
+	rl.wg.Add(1)
+	defer rl.wg.Done()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	for range ticker.C {
-		rl.mu.Lock()
-		rl.cache.SaveState(rl.DB)
-		rl.mu.Unlock()
+	for {
+		select {
+		case <-ticker.C:
+			rl.mu.Lock()
+			rl.cache.SaveState(rl.DB)
+			rl.mu.Unlock()
+		case <-rl.ctx.Done():
+			return
+		}
 	}
 }
 
 func (rl *RateLimiterBucket) RemoveStaleInterval(interval time.Duration) {
+	rl.wg.Add(1)
+	defer rl.wg.Done()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	for range ticker.C {
-		rl.mu.Lock()
-		rl.cache.RemoveStale(time.Second * 5)
-		rl.mu.Unlock()
+	for {
+		select {
+		case <-ticker.C:
+			rl.mu.Lock()
+			rl.cache.RemoveStale(interval)
+			rl.mu.Unlock()
+		case <-rl.ctx.Done():
+			return
+		}
 	}
 }

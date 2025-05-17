@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -20,6 +22,9 @@ import (
 )
 
 func main() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	wg := &sync.WaitGroup{}
 	cfg, err := config.NewConfig("config.json")
 	if err != nil {
 		slog.Error("Reading config file", "error", err)
@@ -31,23 +36,23 @@ func main() {
 		log.Error("Creating load balancer", "error", err)
 		os.Exit(1)
 	}
-	lb.StartHealthChecks()
 	db, err := postgresql.NewPostgresDB()
 	if err != nil {
 		log.Error("Creating postgres database", "error", err)
 		os.Exit(1)
 	}
 	sm := mapcache.NewMapCache(log)
-	rl := ratelimiter.NewRateLimiterBucket(db, sm, log)
+	rl := ratelimiter.NewRateLimiterBucket(ctx, wg, db, sm, log)
 	app := app.NewApp(cfg, db, lb, rl, log)
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.Port),
-		Handler: app.Middleware(app.LB),
+		Handler: app.Middleware(rl.Middleware(app.LB)),
 	}
 	log.Info("Server starting", "port", cfg.Port)
+	lb.StartHealthChecks(ctx, wg)
 	go func() {
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("Server failed", "error", err)
+		if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+			log.Error("Server failed", "error", err)
 			os.Exit(1)
 		}
 	}()
@@ -55,12 +60,14 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	<-sigChan
-	slog.Info("Received shutdown signal, shutting down...")
-
+	log.Info("Received shutdown signal, shutting down...")
+	cancel()
 	// Shutdown server with a timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx1, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := server.Shutdown(ctx); err != nil {
+	err = server.Shutdown(ctx1)
+	wg.Wait()
+	if err != nil {
 		slog.Error("Server shutdown failed", "error", err)
 	} else {
 		slog.Info("Server shutdown successfully")
