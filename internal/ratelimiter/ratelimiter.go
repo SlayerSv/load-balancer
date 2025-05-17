@@ -3,6 +3,7 @@ package ratelimiter
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -14,7 +15,7 @@ import (
 )
 
 type RateLimiter interface {
-	AllowRequest(APIKey string) (bool, error)
+	AllowRequest(APIKey string) error
 }
 
 // RateLimiter manages rate limiting for clients
@@ -33,20 +34,23 @@ func NewRateLimiterBucket(DB database.DataBase, cache clientcache.ClientCache, l
 }
 
 // AllowRequest checks if a request is allowed based on the token bucket
-func (rl *RateLimiterBucket) AllowRequest(APIKey string) (bool, error) {
-	allowed, err := rl.cache.AllowRequest(APIKey)
+func (rl *RateLimiterBucket) AllowRequest(APIKey string) error {
+	err := rl.cache.AllowRequest(APIKey)
 	if errors.Is(err, apperrors.ErrNotFound) {
 		client, err := rl.DB.GetClient(context.Background(), APIKey)
 		if err != nil {
-			return false, err
+			if errors.Is(err, apperrors.ErrNotFound) {
+				return fmt.Errorf("%w: invalid api key", apperrors.ErrUnauthorized)
+			}
+			return err
 		}
 		err = rl.cache.AddClient(client)
 		if err != nil && !errors.Is(err, apperrors.ErrAlreadyExists) {
-			return false, err
+			return err
 		}
 		return rl.cache.AllowRequest(APIKey)
 	}
-	return allowed, err
+	return err
 }
 
 func (rl *RateLimiterBucket) AddTokensInterval(ctx context.Context, wg *sync.WaitGroup, interval time.Duration) {

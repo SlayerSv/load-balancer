@@ -7,6 +7,7 @@ import (
 )
 
 var ErrAlreadyExists = errors.New("already exists")
+var ErrBadRequest = errors.New("bad request")
 var ErrInternal = errors.New("internal server error")
 var ErrNotFound = errors.New("not found")
 var ErrUnauthorized = errors.New("unauthorized")
@@ -20,6 +21,21 @@ type ErrorResponse struct {
 func Error(w http.ResponseWriter, r *http.Request, err error) {
 	w.Header().Set("Content-Type", "application/json")
 	var code int
+	switch {
+	case errors.Is(err, ErrAlreadyExists):
+		code = http.StatusConflict
+	case errors.Is(err, ErrUnauthorized):
+		code = http.StatusUnauthorized
+	case errors.Is(err, ErrNotFound):
+		code = http.StatusNotFound
+	case errors.Is(err, ErrRateLimitExceeded):
+		code = http.StatusTooManyRequests
+	case errors.Is(err, ErrBadRequest):
+		code = http.StatusBadRequest
+	default:
+		code = http.StatusInternalServerError
+		err = ErrInternal
+	}
 	errorResponse := ErrorResponse{
 		Code:    code,
 		Message: err.Error(),

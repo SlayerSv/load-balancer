@@ -14,6 +14,7 @@ import (
 type MapCache struct {
 	Log   logger.Logger
 	cache map[string]*models.ClientCache
+	DB    database.DataBase
 	pool  *sync.Pool
 	mu    sync.RWMutex
 }
@@ -31,12 +32,12 @@ func NewMapCache(log logger.Logger) *MapCache {
 	return sm
 }
 
-func (sm *MapCache) AllowRequest(APIKey string) (bool, error) {
+func (sm *MapCache) AllowRequest(APIKey string) error {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	client, ok := sm.cache[APIKey]
 	if !ok {
-		return false, apperrors.ErrNotFound
+		return apperrors.ErrNotFound
 	}
 	client.Mu.Lock()
 	defer client.Mu.Unlock()
@@ -44,9 +45,9 @@ func (sm *MapCache) AllowRequest(APIKey string) (bool, error) {
 		client.Tokens--
 		client.HasChanged = true
 		client.Expires = time.Now().Add(time.Minute * 5)
-		return true, nil
+		return nil
 	}
-	return false, nil
+	return apperrors.ErrRateLimitExceeded
 }
 
 func (sm *MapCache) AddClient(client models.Client) error {
@@ -77,12 +78,30 @@ func (sm *MapCache) GetClient(APIKey string) (models.Client, error) {
 	return client.Client, nil
 }
 
+func (sm *MapCache) UpdateClient(client models.Client) (models.Client, error) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	cl, has := sm.cache[client.APIKey]
+	if !has {
+		sm.Log.Debug("Client not found in cache", "client_id", client.ClientID, "api_key", client.APIKey)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		return sm.DB.UpdateClient(ctx, client)
+	}
+	cl.Mu.Lock()
+	defer cl.Mu.Unlock()
+	cl.Capacity = client.Capacity
+	cl.RatePerSec = client.RatePerSec
+	cl.Tokens = min(cl.Tokens, cl.Capacity)
+	return cl.Client, nil
+}
+
 func (sm *MapCache) DeleteClient(APIKey string) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	client, ok := sm.cache[APIKey]
 	if !ok {
-		return apperrors.ErrNotFound
+		return sm.DeleteClient(APIKey)
 	}
 	delete(sm.cache, APIKey)
 	sm.pool.Put(client)
