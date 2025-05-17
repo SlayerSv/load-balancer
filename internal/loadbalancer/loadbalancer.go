@@ -17,16 +17,16 @@ import (
 var errNoAvailableBackends = errors.New("no available backends")
 
 type LoadBalancer struct {
-	mu       sync.Mutex
 	backends []*Backend
-	current  int
+	current  atomic.Int64
 	cfg      *config.Config
 	Log      logger.Logger
 }
 
 type Backend struct {
 	URL       *url.URL
-	isHealthy atomic.Bool
+	isHealthy bool
+	mu        sync.RWMutex
 }
 
 func NewLoadBalancer(log logger.Logger, cfg *config.Config) (*LoadBalancer, error) {
@@ -37,21 +37,19 @@ func NewLoadBalancer(log logger.Logger, cfg *config.Config) (*LoadBalancer, erro
 		if err != nil {
 			return nil, err
 		}
-		b := &Backend{URL: parsedURL, isHealthy: atomic.Bool{}}
-		b.isHealthy.Store(true)
+		b := &Backend{URL: parsedURL, isHealthy: true}
 		lb.backends = append(lb.backends, b)
 	}
 	return lb, nil
 }
 
 func (lb *LoadBalancer) NextBackend() (*Backend, error) {
-	lb.mu.Lock()
-	defer lb.mu.Unlock()
 	for range lb.backends {
-		lb.current = (lb.current + 1) % len(lb.backends)
-		b := lb.backends[lb.current]
-		isHealthy := b.isHealthy.Load()
-		if isHealthy {
+		ind := lb.current.Add(1) % int64(len(lb.backends))
+		b := lb.backends[ind]
+		b.mu.RLock()
+		defer b.mu.RUnlock()
+		if b.isHealthy {
 			return b, nil
 		}
 	}
@@ -92,18 +90,19 @@ func (lb *LoadBalancer) StartHealthChecks() {
 
 // healthCheck performs a health check on a single backend
 func (lb *LoadBalancer) healthCheck(client http.Client, b *Backend) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	resp, err := client.Get(b.URL.String() + "/health")
-	b.isHealthy.Load()
 
 	if err != nil || resp.StatusCode != http.StatusOK {
-		wasHealthy := b.isHealthy.Swap(false)
-		if wasHealthy { // Only log if state changes
+		if b.isHealthy { // Only log if state changes
 			lb.Log.Warn("Backend is down", "backend_url", b.URL.String(), "error", err)
+			b.isHealthy = false
 		}
 	} else {
-		wasHealthy := b.isHealthy.Swap(true)
-		if !wasHealthy { // Only log if state changes
+		if b.isHealthy { // Only log if state changes
 			lb.Log.Info("Backend is up", "backend_url", b.URL.String())
+			b.isHealthy = true
 		}
 	}
 }
