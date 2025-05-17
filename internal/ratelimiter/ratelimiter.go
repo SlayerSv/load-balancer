@@ -2,10 +2,12 @@ package ratelimiter
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sync"
 	"time"
 
+	"github.com/SlayerSv/load-balancer/internal/apperrors"
 	"github.com/SlayerSv/load-balancer/internal/database"
 	"github.com/SlayerSv/load-balancer/internal/logger"
 	"github.com/SlayerSv/load-balancer/internal/ratelimiter/clientcache"
@@ -21,7 +23,6 @@ type RateLimiterBucket struct {
 	cache         clientcache.ClientCache
 	Log           logger.Logger
 	clientHandler http.Handler
-	mu            sync.Mutex
 }
 
 // NewRateLimiter creates a new RateLimiter with a database connection
@@ -33,33 +34,19 @@ func NewRateLimiterBucket(DB database.DataBase, cache clientcache.ClientCache, l
 
 // AllowRequest checks if a request is allowed based on the token bucket
 func (rl *RateLimiterBucket) AllowRequest(APIKey string) (bool, error) {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-	client, err := rl.cache.GetClient(APIKey)
-	if err != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		clientV, err := rl.DB.GetClient(ctx, APIKey)
+	allowed, err := rl.cache.AllowRequest(APIKey)
+	if errors.Is(err, apperrors.ErrNotFound) {
+		client, err := rl.DB.GetClient(context.Background(), APIKey)
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			rl.cache.AddClient(clientV)
-		}()
-		if clientV.Tokens > 0 {
-			clientV.Tokens--
-			clientV.HasChanged = true
-			return true, nil
+		err = rl.cache.AddClient(client)
+		if err != nil && !errors.Is(err, apperrors.ErrAlreadyExists) {
+			return false, err
 		}
-		return false, nil
-
+		return rl.cache.AllowRequest(APIKey)
 	}
-	if client.Tokens > 0 {
-		client.Tokens--
-		client.HasChanged = true
-		return true, nil
-	}
-	return false, nil
+	return allowed, err
 }
 
 func (rl *RateLimiterBucket) AddTokensInterval(ctx context.Context, wg *sync.WaitGroup, interval time.Duration) {
@@ -70,9 +57,7 @@ func (rl *RateLimiterBucket) AddTokensInterval(ctx context.Context, wg *sync.Wai
 	for {
 		select {
 		case <-ticker.C:
-			rl.mu.Lock()
 			rl.cache.AddTokensToAll()
-			rl.mu.Unlock()
 		case <-ctx.Done():
 			return
 		}
@@ -87,9 +72,7 @@ func (rl *RateLimiterBucket) SaveStateInterval(ctx context.Context, wg *sync.Wai
 	for {
 		select {
 		case <-ticker.C:
-			rl.mu.Lock()
 			rl.cache.SaveState(rl.DB)
-			rl.mu.Unlock()
 		case <-ctx.Done():
 			return
 		}
@@ -104,9 +87,7 @@ func (rl *RateLimiterBucket) RemoveStaleInterval(ctx context.Context, wg *sync.W
 	for {
 		select {
 		case <-ticker.C:
-			rl.mu.Lock()
-			rl.cache.RemoveStale(interval)
-			rl.mu.Unlock()
+			rl.cache.RemoveStale()
 		case <-ctx.Done():
 			return
 		}

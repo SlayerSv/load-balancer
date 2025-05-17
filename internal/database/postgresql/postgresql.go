@@ -156,31 +156,3 @@ func (p *PostgreSQL) UpdateTokens(ctx context.Context, client models.Client) (mo
 	}
 	return updatedClient, nil
 }
-
-func (p *PostgreSQL) UpdateManyTokens(ctx context.Context, clients map[string]*models.Client) error {
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("beginning transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	stmt, err := tx.PrepareContext(ctx, "UPDATE clients SET tokens = $1, last_refill = $2 WHERE client_id = $3")
-	if err != nil {
-		return fmt.Errorf("preparing statement for tx updates: %w", err)
-	}
-	defer stmt.Close()
-
-	for _, c := range clients {
-		if c.HasChanged {
-			_, err = stmt.ExecContext(ctx, c.Tokens, c.LastRefill, c.ClientID)
-			if err != nil {
-				return fmt.Errorf("updating client %s: %w", c.ClientID, err)
-			}
-		}
-	}
-	err = tx.Commit()
-	if err != nil {
-		return fmt.Errorf("commiting transaction: %w", err)
-	}
-	return nil
-}
