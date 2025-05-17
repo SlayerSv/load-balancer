@@ -42,20 +42,26 @@ func main() {
 		os.Exit(1)
 	}
 	sm := mapcache.NewMapCache(log)
-	rl := ratelimiter.NewRateLimiterBucket(ctx, wg, db, sm, log)
+	rl := ratelimiter.NewRateLimiterBucket(db, sm, log)
 	app := app.NewApp(cfg, db, lb, rl, log)
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.Port),
 		Handler: app.Middleware(rl.Middleware(app.LB)),
 	}
 	log.Info("Server starting", "port", cfg.Port)
-	lb.StartHealthChecks(ctx, wg)
 	go func() {
 		if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 			log.Error("Server failed", "error", err)
 			os.Exit(1)
 		}
 	}()
+
+	// start services
+	lb.StartHealthChecks(ctx, wg)
+	rl.AddTokensInterval(ctx, wg, time.Second)
+	rl.SaveStateInterval(ctx, wg, time.Second*10)
+	rl.RemoveStaleInterval(ctx, wg, time.Second*60)
+
 	// Handle graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)

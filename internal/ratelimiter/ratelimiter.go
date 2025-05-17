@@ -22,17 +22,12 @@ type RateLimiterBucket struct {
 	Log           logger.Logger
 	clientHandler http.Handler
 	mu            sync.Mutex
-	ctx           context.Context
-	wg            *sync.WaitGroup
 }
 
 // NewRateLimiter creates a new RateLimiter with a database connection
-func NewRateLimiterBucket(ctx context.Context, wg *sync.WaitGroup, DB database.DataBase, cache clientcache.ClientCache, log logger.Logger) *RateLimiterBucket {
-	rl := &RateLimiterBucket{DB: DB, cache: cache, Log: log, ctx: ctx, wg: wg}
+func NewRateLimiterBucket(DB database.DataBase, cache clientcache.ClientCache, log logger.Logger) *RateLimiterBucket {
+	rl := &RateLimiterBucket{DB: DB, cache: cache, Log: log}
 	rl.clientHandler = rl.NewClientHandler()
-	rl.AddTokensInterval(time.Second)
-	rl.SaveStateInterval(time.Second * 10)
-	rl.RemoveStaleInterval(time.Second * 60)
 	return rl
 }
 
@@ -67,9 +62,9 @@ func (rl *RateLimiterBucket) AllowRequest(APIKey string) (bool, error) {
 	return false, nil
 }
 
-func (rl *RateLimiterBucket) AddTokensInterval(interval time.Duration) {
-	rl.wg.Add(1)
-	defer rl.wg.Done()
+func (rl *RateLimiterBucket) AddTokensInterval(ctx context.Context, wg *sync.WaitGroup, interval time.Duration) {
+	wg.Add(1)
+	defer wg.Done()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -78,15 +73,15 @@ func (rl *RateLimiterBucket) AddTokensInterval(interval time.Duration) {
 			rl.mu.Lock()
 			rl.cache.AddTokensToAll()
 			rl.mu.Unlock()
-		case <-rl.ctx.Done():
+		case <-ctx.Done():
 			return
 		}
 	}
 }
 
-func (rl *RateLimiterBucket) SaveStateInterval(interval time.Duration) {
-	rl.wg.Add(1)
-	defer rl.wg.Done()
+func (rl *RateLimiterBucket) SaveStateInterval(ctx context.Context, wg *sync.WaitGroup, interval time.Duration) {
+	wg.Add(1)
+	defer wg.Done()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -95,15 +90,15 @@ func (rl *RateLimiterBucket) SaveStateInterval(interval time.Duration) {
 			rl.mu.Lock()
 			rl.cache.SaveState(rl.DB)
 			rl.mu.Unlock()
-		case <-rl.ctx.Done():
+		case <-ctx.Done():
 			return
 		}
 	}
 }
 
-func (rl *RateLimiterBucket) RemoveStaleInterval(interval time.Duration) {
-	rl.wg.Add(1)
-	defer rl.wg.Done()
+func (rl *RateLimiterBucket) RemoveStaleInterval(ctx context.Context, wg *sync.WaitGroup, interval time.Duration) {
+	wg.Add(1)
+	defer wg.Done()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -112,7 +107,7 @@ func (rl *RateLimiterBucket) RemoveStaleInterval(interval time.Duration) {
 			rl.mu.Lock()
 			rl.cache.RemoveStale(interval)
 			rl.mu.Unlock()
-		case <-rl.ctx.Done():
+		case <-ctx.Done():
 			return
 		}
 	}
