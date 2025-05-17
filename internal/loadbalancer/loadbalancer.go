@@ -1,9 +1,7 @@
 package loadbalancer
 
 import (
-	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -11,7 +9,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/SlayerSv/load-balancer/internal/apperrors"
 	"github.com/SlayerSv/load-balancer/internal/config"
+	"github.com/SlayerSv/load-balancer/internal/logger"
 )
 
 var errNoAvailableBackends = errors.New("no available backends")
@@ -21,6 +21,7 @@ type LoadBalancer struct {
 	backends []*Backend
 	current  int
 	cfg      *config.Config
+	Log      logger.Logger
 }
 
 type Backend struct {
@@ -28,15 +29,10 @@ type Backend struct {
 	isHealthy atomic.Bool
 }
 
-type ErrorResponse struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-func NewLoadBalancer(backendURLs []string) (*LoadBalancer, error) {
-	lb := &LoadBalancer{}
-	lb.backends = make([]*Backend, 0, len(backendURLs))
-	for _, u := range backendURLs {
+func NewLoadBalancer(log logger.Logger, cfg *config.Config) (*LoadBalancer, error) {
+	lb := &LoadBalancer{Log: log}
+	lb.backends = make([]*Backend, 0, len(cfg.BackendURLs))
+	for _, u := range cfg.BackendURLs {
 		parsedURL, err := url.Parse(u)
 		if err != nil {
 			return nil, err
@@ -102,12 +98,12 @@ func (lb *LoadBalancer) healthCheck(client http.Client, b *Backend) {
 	if err != nil || resp.StatusCode != http.StatusOK {
 		wasHealthy := b.isHealthy.Swap(false)
 		if wasHealthy { // Only log if state changes
-			slog.Warn("Backend is down", "backend_url", b.URL.String(), "error", err)
+			lb.Log.Warn("Backend is down", "backend_url", b.URL.String(), "error", err)
 		}
 	} else {
 		wasHealthy := b.isHealthy.Swap(true)
 		if !wasHealthy { // Only log if state changes
-			slog.Info("Backend is up", "backend_url", b.URL.String())
+			lb.Log.Info("Backend is up", "backend_url", b.URL.String())
 		}
 	}
 }
@@ -115,24 +111,10 @@ func (lb *LoadBalancer) healthCheck(client http.Client, b *Backend) {
 func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	backend, err := lb.NextBackend()
 	if errors.Is(err, errNoAvailableBackends) {
-		slog.Error("No available backends", "request_url", r.URL.Path)
-		lb.Error(w, r, errNoAvailableBackends.Error(), http.StatusServiceUnavailable)
+		apperrors.Error(w, r, errNoAvailableBackends)
 		return
 	}
 	proxy := httputil.NewSingleHostReverseProxy(backend.URL)
+	lb.Log.Info("Forwarding request", "backend_url", backend.URL.Path)
 	proxy.ServeHTTP(w, r)
-	slog.Info("Request forwarded", "backend_url", backend.URL.String(), "request_url", r.URL.Path)
-}
-
-func (lb *LoadBalancer) Error(w http.ResponseWriter, r *http.Request, message string, code int) {
-	w.Header().Set("Content-Type", "application/json")
-	errorResponse := ErrorResponse{
-		Code:    code,
-		Message: message,
-	}
-	w.WriteHeader(code)
-	err := json.NewEncoder(w).Encode(errorResponse)
-	if err != nil {
-		slog.Error("Encoding error response", "error", err)
-	}
 }

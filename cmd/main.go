@@ -10,8 +10,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/SlayerSv/load-balancer/internal/app"
 	"github.com/SlayerSv/load-balancer/internal/config"
+	"github.com/SlayerSv/load-balancer/internal/database/postgresql"
 	"github.com/SlayerSv/load-balancer/internal/loadbalancer"
+	"github.com/SlayerSv/load-balancer/internal/logger"
+	"github.com/SlayerSv/load-balancer/internal/ratelimiter"
+	"github.com/SlayerSv/load-balancer/internal/ratelimiter/clientcache/mapcache"
 )
 
 func main() {
@@ -20,17 +25,26 @@ func main() {
 		slog.Error("Reading config file", "error", err)
 		os.Exit(1)
 	}
-	lb, err := loadbalancer.NewLoadBalancer(cfg.BackendURLs)
+	log := logger.NewSlog(os.Stdout, nil)
+	lb, err := loadbalancer.NewLoadBalancer(log, cfg)
 	if err != nil {
-		slog.Error("Creating load balancer", "error", err)
+		log.Error("Creating load balancer", "error", err)
 		os.Exit(1)
 	}
 	lb.StartHealthChecks()
+	db, err := postgresql.NewPostgresDB()
+	if err != nil {
+		log.Error("Creating postgres database", "error", err)
+		os.Exit(1)
+	}
+	sm := mapcache.NewMapCache(log)
+	rl := ratelimiter.NewRateLimiterBucket(db, sm, log)
+	app := app.NewApp(cfg, db, lb, rl, log)
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.Port),
-		Handler: lb,
+		Handler: app.Middleware(app.LB),
 	}
-	slog.Info("Server starting", "port", cfg.Port)
+	log.Info("Server starting", "port", cfg.Port)
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("Server failed", "error", err)

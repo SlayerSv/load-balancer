@@ -13,5 +13,5 @@ type DataBase interface {
 	DeleteClient(ctx context.Context, clientID string) (models.Client, error)
 
 	UpdateTokens(ctx context.Context, client models.Client) (models.Client, error)
-	UpdateManyTokens(ctx context.Context, client []models.Client) error
+	UpdateManyTokens(ctx context.Context, clients map[string]*models.Client) error
 }
