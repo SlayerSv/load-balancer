@@ -108,7 +108,7 @@ status 204 no content
     "log_level": "debug",
     "log_file": "path_to_file",
     "load_balancer": {
-        "backend_urls": ["http://localhost:8081", "http://localhost:8082"],
+        "backend_urls": ["http://host.docker.internal:8081", "http://host.docker.internal:8082"],
         "health_check_interval": 10,
         "health_check_worker_count": 2,
         "max_retries": 2,
