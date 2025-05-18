@@ -19,9 +19,12 @@ import (
 	"github.com/SlayerSv/load-balancer/internal/logger"
 	"github.com/SlayerSv/load-balancer/internal/ratelimiter"
 	"github.com/SlayerSv/load-balancer/internal/ratelimiter/clientcache/mapcache"
+
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	godotenv.Load()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	wg := &sync.WaitGroup{}
@@ -31,7 +34,7 @@ func main() {
 		os.Exit(1)
 	}
 	log := logger.NewSlog(os.Stdout, nil)
-	lb, err := loadbalancer.NewLoadBalancer(log, cfg)
+	lb, err := loadbalancer.NewLoadBalancer(log, &cfg.LoadBalancer)
 	if err != nil {
 		log.Error("Creating load balancer", "error", err)
 		os.Exit(1)
@@ -41,8 +44,8 @@ func main() {
 		log.Error("Creating postgres database", "error", err)
 		os.Exit(1)
 	}
-	sm := mapcache.NewMapCache(log)
-	rl := ratelimiter.NewRateLimiterBucket(db, sm, log)
+	sm := mapcache.NewMapCache(&cfg.RateLimiter.Cache, log)
+	rl := ratelimiter.NewRateLimiterBucket(&cfg.RateLimiter, db, sm, log)
 	app := app.NewApp(cfg, db, lb, rl, log)
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.Port),
@@ -58,9 +61,9 @@ func main() {
 
 	// start services
 	lb.StartHealthChecks(ctx, wg)
-	rl.AddTokensInterval(ctx, wg, time.Second)
-	rl.SaveStateInterval(ctx, wg, time.Second*10)
-	rl.RemoveStaleInterval(ctx, wg, time.Second*60)
+	rl.AddTokensInterval(ctx, wg)
+	rl.SaveStateInterval(ctx, wg)
+	rl.RemoveStaleInterval(ctx, wg)
 
 	// Handle graceful shutdown
 	sigChan := make(chan os.Signal, 1)

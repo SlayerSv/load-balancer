@@ -18,7 +18,7 @@ import (
 type App struct {
 	Cfg           *config.Config
 	DB            database.DataBase
-	LB            *loadbalancer.LoadBalancer
+	LB            loadbalancer.ILoadBalancer
 	RL            ratelimiter.RateLimiter
 	Log           logger.Logger
 	nextRequestID atomic.Int64

@@ -18,10 +18,15 @@ import (
 
 var errNoAvailableBackends = errors.New("no available backends")
 
+type ILoadBalancer interface {
+	GetBackend() (*Backend, error)
+	http.Handler
+}
+
 type LoadBalancer struct {
 	backends []*Backend
 	current  atomic.Int64
-	cfg      *config.Config
+	cfg      *config.ConfigLoadBalancer
 	Log      logger.Logger
 }
 
@@ -31,7 +36,7 @@ type Backend struct {
 	mu        sync.RWMutex
 }
 
-func NewLoadBalancer(log logger.Logger, cfg *config.Config) (*LoadBalancer, error) {
+func NewLoadBalancer(log logger.Logger, cfg *config.ConfigLoadBalancer) (*LoadBalancer, error) {
 	lb := &LoadBalancer{Log: log}
 	lb.backends = make([]*Backend, 0, len(cfg.BackendURLs))
 	for _, u := range cfg.BackendURLs {
@@ -45,7 +50,7 @@ func NewLoadBalancer(log logger.Logger, cfg *config.Config) (*LoadBalancer, erro
 	return lb, nil
 }
 
-func (lb *LoadBalancer) NextBackend() (*Backend, error) {
+func (lb *LoadBalancer) GetBackend() (*Backend, error) {
 	for range lb.backends {
 		ind := lb.current.Add(1) % int64(len(lb.backends))
 		b := lb.backends[ind]
@@ -63,7 +68,7 @@ func (lb *LoadBalancer) StartHealthChecks(ctx context.Context, wg *sync.WaitGrou
 	// Channel to distribute health check tasks
 	tasks := make(chan *Backend, len(lb.backends))
 	client := http.Client{
-		Timeout: time.Second,
+		Timeout: time.Second * time.Duration(lb.cfg.HealthCheckTimeout),
 	}
 	for range lb.cfg.WorkerCount {
 		wg.Add(1)
@@ -119,7 +124,7 @@ func (lb *LoadBalancer) healthCheck(client http.Client, b *Backend) {
 }
 
 func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	backend, err := lb.NextBackend()
+	backend, err := lb.GetBackend()
 	if errors.Is(err, errNoAvailableBackends) {
 		apperrors.Error(w, r, errNoAvailableBackends)
 		return

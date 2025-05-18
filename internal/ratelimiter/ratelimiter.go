@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/SlayerSv/load-balancer/internal/apperrors"
+	"github.com/SlayerSv/load-balancer/internal/config"
 	"github.com/SlayerSv/load-balancer/internal/database"
 	"github.com/SlayerSv/load-balancer/internal/logger"
 	"github.com/SlayerSv/load-balancer/internal/ratelimiter/clientcache"
@@ -20,6 +21,7 @@ type RateLimiter interface {
 
 // RateLimiter manages rate limiting for clients
 type RateLimiterBucket struct {
+	Cfg           *config.ConfigRateLimiter
 	DB            database.DataBase
 	cache         clientcache.ClientCache
 	Log           logger.Logger
@@ -27,8 +29,8 @@ type RateLimiterBucket struct {
 }
 
 // NewRateLimiter creates a new RateLimiter with a database connection
-func NewRateLimiterBucket(DB database.DataBase, cache clientcache.ClientCache, log logger.Logger) *RateLimiterBucket {
-	rl := &RateLimiterBucket{DB: DB, cache: cache, Log: log}
+func NewRateLimiterBucket(cfg *config.ConfigRateLimiter, DB database.DataBase, cache clientcache.ClientCache, log logger.Logger) *RateLimiterBucket {
+	rl := &RateLimiterBucket{Cfg: cfg, DB: DB, cache: cache, Log: log}
 	rl.clientHandler = rl.NewClientHandler()
 	return rl
 }
@@ -53,10 +55,10 @@ func (rl *RateLimiterBucket) AllowRequest(APIKey string) error {
 	return err
 }
 
-func (rl *RateLimiterBucket) AddTokensInterval(ctx context.Context, wg *sync.WaitGroup, interval time.Duration) {
+func (rl *RateLimiterBucket) AddTokensInterval(ctx context.Context, wg *sync.WaitGroup) {
 	wg.Add(1)
 	defer wg.Done()
-	ticker := time.NewTicker(interval)
+	ticker := time.NewTicker(time.Duration(rl.Cfg.AddTokensInterval) * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
@@ -68,10 +70,10 @@ func (rl *RateLimiterBucket) AddTokensInterval(ctx context.Context, wg *sync.Wai
 	}
 }
 
-func (rl *RateLimiterBucket) SaveStateInterval(ctx context.Context, wg *sync.WaitGroup, interval time.Duration) {
+func (rl *RateLimiterBucket) SaveStateInterval(ctx context.Context, wg *sync.WaitGroup) {
 	wg.Add(1)
 	defer wg.Done()
-	ticker := time.NewTicker(interval)
+	ticker := time.NewTicker(time.Duration(rl.Cfg.SaveStateInterval) * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
@@ -83,10 +85,10 @@ func (rl *RateLimiterBucket) SaveStateInterval(ctx context.Context, wg *sync.Wai
 	}
 }
 
-func (rl *RateLimiterBucket) RemoveStaleInterval(ctx context.Context, wg *sync.WaitGroup, interval time.Duration) {
+func (rl *RateLimiterBucket) RemoveStaleInterval(ctx context.Context, wg *sync.WaitGroup) {
 	wg.Add(1)
 	defer wg.Done()
-	ticker := time.NewTicker(interval)
+	ticker := time.NewTicker(time.Duration(rl.Cfg.RemoveStaleInterval) * time.Second)
 	defer ticker.Stop()
 	for {
 		select {

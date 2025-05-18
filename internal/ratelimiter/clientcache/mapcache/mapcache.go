@@ -6,12 +6,14 @@ import (
 	"time"
 
 	"github.com/SlayerSv/load-balancer/internal/apperrors"
+	"github.com/SlayerSv/load-balancer/internal/config"
 	"github.com/SlayerSv/load-balancer/internal/database"
 	"github.com/SlayerSv/load-balancer/internal/logger"
 	"github.com/SlayerSv/load-balancer/internal/models"
 )
 
 type MapCache struct {
+	Cfg   *config.ConfigRateLimiterCache
 	Log   logger.Logger
 	cache map[string]*models.ClientCache
 	DB    database.DataBase
@@ -19,8 +21,9 @@ type MapCache struct {
 	mu    sync.RWMutex
 }
 
-func NewMapCache(log logger.Logger) *MapCache {
+func NewMapCache(cfg *config.ConfigRateLimiterCache, log logger.Logger) *MapCache {
 	sm := &MapCache{
+		Cfg:   cfg,
 		cache: make(map[string]*models.ClientCache),
 		pool: &sync.Pool{
 			New: func() any {
@@ -44,7 +47,7 @@ func (sm *MapCache) AllowRequest(APIKey string) error {
 	if client.Tokens > 0 {
 		client.Tokens--
 		client.HasChanged = true
-		client.Expires = time.Now().Add(time.Minute * 5)
+		client.Expires = time.Now().Add(time.Duration(sm.Cfg.TimeToLive) * time.Second)
 		return nil
 	}
 	return apperrors.ErrRateLimitExceeded
@@ -60,7 +63,7 @@ func (sm *MapCache) AddClient(client models.Client) error {
 	}
 	cl := sm.pool.Get().(*models.ClientCache)
 	cl.Copy(client)
-	cl.Expires = time.Now().Add(time.Minute * 5)
+	cl.Expires = time.Now().Add(time.Duration(sm.Cfg.TimeToLive) * time.Second)
 	sm.cache[client.APIKey] = cl
 	sm.Log.Debug("Added client to cache", "client_id", client.ClientID, "api_key", client.APIKey)
 	return nil
