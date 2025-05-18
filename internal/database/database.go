@@ -13,7 +13,7 @@ type DataBase interface {
 	AddClient(ctx context.Context, client models.Client) (models.Client, error)
 	// UpdateClient only updates rate_per_sec and capacity fields of a client
 	UpdateClient(ctx context.Context, client models.Client) (models.Client, error)
-	DeleteClient(ctx context.Context, clientID string) error
+	DeleteClient(ctx context.Context, clientID string) (models.Client, error)
 
 	UpdateTokens(ctx context.Context, client models.Client) (models.Client, error)
 }

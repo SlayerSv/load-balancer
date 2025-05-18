@@ -17,7 +17,7 @@ func (rl *RateLimiterBucket) NewClientHandler() http.Handler {
 	mux.HandleFunc("GET /clients/{client_id}", rl.GetClient)
 	mux.HandleFunc("POST /clients", rl.AddClient)
 	mux.HandleFunc("PATCH /clients", rl.UpdateClient)
-	mux.HandleFunc("DELETE /clients", rl.DeleteClient)
+	mux.HandleFunc("DELETE /clients/{client_id}", rl.DeleteClient)
 	return mux
 }
 
@@ -47,6 +47,9 @@ func (rl *RateLimiterBucket) Middleware(next http.Handler) http.Handler {
 // GetClient return a client from database (client state may lag behind cache state)
 func (rl *RateLimiterBucket) GetClient(w http.ResponseWriter, r *http.Request) {
 	clientID := r.PathValue("client_id")
+	if clientID == "" {
+		apperrors.Error(w, r, fmt.Errorf("%w: missing client id value in path", apperrors.ErrBadRequest))
+	}
 	DBClient, err := rl.DB.GetClient(r.Context(), clientID)
 	if err != nil {
 		apperrors.Error(w, r, err)
@@ -122,18 +125,16 @@ func (rl *RateLimiterBucket) UpdateClient(w http.ResponseWriter, r *http.Request
 
 // DeleteClient Deletes client from database and cache.
 func (rl *RateLimiterBucket) DeleteClient(w http.ResponseWriter, r *http.Request) {
-	var client models.Client
-	err := json.NewDecoder(r.Body).Decode(&client)
-	if err != nil {
-		apperrors.Error(w, r, fmt.Errorf("%w: invalid request body", apperrors.ErrBadRequest))
-		return
+	clientID := r.PathValue("client_id")
+	if clientID == "" {
+		apperrors.Error(w, r, fmt.Errorf("%w: missing client id value in path", apperrors.ErrBadRequest))
 	}
 	// delete from database first
-	errDB := rl.DB.DeleteClient(r.Context(), client.ClientID)
-	if errDB != nil {
+	deletedClient, err := rl.DB.DeleteClient(r.Context(), clientID)
+	if err != nil {
 		apperrors.Error(w, r, err)
 		return
 	}
-	rl.cache.DeleteClient(client.APIKey)
+	rl.cache.DeleteClient(deletedClient.APIKey)
 	w.WriteHeader(http.StatusNoContent)
 }
