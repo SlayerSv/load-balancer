@@ -7,6 +7,7 @@ import (
 
 type Config struct {
 	Port         int                `json:"port"`
+	LogLevel     string             `json:"log_level"`
 	LoadBalancer ConfigLoadBalancer `json:"load_balancer"`
 	RateLimiter  ConfigRateLimiter  `json:"rate_limiter"`
 }

@@ -33,7 +33,8 @@ func main() {
 		slog.Error("Reading config file", "error", err)
 		os.Exit(1)
 	}
-	log := logger.NewSlog(os.Stdout, nil)
+	level := logger.GetSlogLevel(cfg.LogLevel)
+	log := logger.NewSlog(os.Stdout, &slog.HandlerOptions{Level: level})
 	lb, err := loadbalancer.NewLoadBalancer(log, &cfg.LoadBalancer)
 	if err != nil {
 		log.Error("Creating load balancer", "error", err)

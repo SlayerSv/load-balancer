@@ -3,6 +3,7 @@ package logger
 import (
 	"log/slog"
 	"os"
+	"strings"
 )
 
 type Logger interface {
@@ -42,6 +43,19 @@ func (s *Slog) Debug(msg string, keyVals ...any) {
 // NewSlog creates a Logger using slog.
 func NewSlog(file *os.File, opts *slog.HandlerOptions) Logger {
 	return &Slog{
-		slog.New(slog.NewJSONHandler(file, nil)),
+		slog.New(slog.NewJSONHandler(file, opts)),
+	}
+}
+
+func GetSlogLevel(level string) slog.Level {
+	switch strings.ToLower(level) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
 	}
 }
