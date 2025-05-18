@@ -12,14 +12,22 @@ import (
 	"github.com/SlayerSv/load-balancer/internal/models"
 )
 
+// MapCache represents ClientCache implementation using token bucket algorithm.
+// Uses a map as a cache for clients reducing database operations.
+// Uses Read Write mutex for accessing cache. Most common operations
+// require read lock, reducing lock times.
 type MapCache struct {
-	Cfg   *config.ConfigRateLimiterCache
-	Log   logger.Logger
+	Cfg *config.ConfigRateLimiterCache
+	Log logger.Logger
+	// cache is the temporary in memory storage of recently used clients
 	cache map[string]*models.ClientCache
-	pool  *sync.Pool
-	mu    sync.RWMutex
+	// pool is a sync pool for reusing client objects concurrently
+	pool *sync.Pool
+	// mu is RW mutex for accessing cache.
+	mu sync.RWMutex
 }
 
+// NewMapCache returns pointer to instance of MapCache
 func NewMapCache(cfg *config.ConfigRateLimiterCache, log logger.Logger) *MapCache {
 	sm := &MapCache{
 		Cfg:   cfg,
@@ -34,6 +42,11 @@ func NewMapCache(cfg *config.ConfigRateLimiterCache, log logger.Logger) *MapCach
 	return sm
 }
 
+// AllowRequest finds client in cache by api key,
+// checks if client has enough tokens, subtracts those
+// tokens to grant access. Returns error if client not found
+// or does not have enough tokens. Increases expiration time
+// and sets HasChanged to true.
 func (sm *MapCache) AllowRequest(APIKey string) error {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
@@ -52,6 +65,7 @@ func (sm *MapCache) AllowRequest(APIKey string) error {
 	return apperrors.ErrRateLimitExceeded
 }
 
+// AddClient adds provided client to cache.
 func (sm *MapCache) AddClient(client models.Client) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -60,15 +74,21 @@ func (sm *MapCache) AddClient(client models.Client) error {
 		sm.Log.Debug("Client already in cache", "client_id", client.ClientID, "api_key", client.APIKey)
 		return apperrors.ErrAlreadyExists
 	}
+	// reuse ClientCache objects from sync pool
 	cl := sm.pool.Get().(*models.ClientCache)
+	// copy fields
 	cl.Copy(client)
+	// set expiration date
 	cl.Expires = time.Now().Add(time.Duration(sm.Cfg.TimeToLive) * time.Second)
+	// run add tokens to add tokens
 	sm.AddTokens(cl)
+	// save to cache
 	sm.cache[client.APIKey] = cl
 	sm.Log.Debug("Added client to cache", "client_id", client.ClientID, "api_key", client.APIKey)
 	return nil
 }
 
+// GetClient returns client from a cache or error
 func (sm *MapCache) GetClient(APIKey string) (models.Client, error) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
@@ -81,6 +101,7 @@ func (sm *MapCache) GetClient(APIKey string) (models.Client, error) {
 	return client.Client, nil
 }
 
+// UpdateClient updates RatePerSec and Capacity fields of a client and returns the updated client.
 func (sm *MapCache) UpdateClient(client models.Client) (models.Client, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -97,6 +118,7 @@ func (sm *MapCache) UpdateClient(client models.Client) (models.Client, error) {
 	return cl.Client, nil
 }
 
+// DeleteClient deletes client from cache
 func (sm *MapCache) DeleteClient(APIKey string) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -109,15 +131,17 @@ func (sm *MapCache) DeleteClient(APIKey string) error {
 	return nil
 }
 
+// AddTokensToAll runs AddToken func for all clients in cache
 func (sm *MapCache) AddTokensToAll() {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-
 	for _, client := range sm.cache {
 		sm.AddTokens(client)
 	}
 }
 
+// AddTokens adds tokens to a client based on elapsed time since
+// last refill and clients tokens rate per sec.
 func (sm *MapCache) AddTokens(client *models.ClientCache) {
 	client.Mu.Lock()
 	defer client.Mu.Unlock()
@@ -136,6 +160,7 @@ func (sm *MapCache) AddTokens(client *models.ClientCache) {
 	sm.Log.Debug("Added tokens", "client", &client, "tokens", tokensToAdd, "elapsed", elapsed, "now", now)
 }
 
+// SaveState saves state of changed clients in cache to database.
 func (sm *MapCache) SaveState(DB database.DataBase) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
@@ -158,10 +183,18 @@ func (sm *MapCache) SaveState(DB database.DataBase) {
 	}
 }
 
+// RemoveStale removes clients from cache, whose Expires field has passed current time.
+// Uses 2 passes for reducing mutex lock times. First pass is read only, during which
+// clients for deletion are collected in a slice. Second is a write lock pass,
+// which removes for deletion clients from cache, making sure that client's state
+// has not changed and they are still should be removed
 func (sm *MapCache) RemoveStale() {
+	// first pass is read only for performance
 	sm.mu.RLock()
+	// slices for candidates for removal
 	forDeletion := make([]*models.ClientCache, 0)
 	now := time.Now()
+	// collect candidates for deletion
 	for _, client := range sm.cache {
 		client.Mu.RLock()
 		if now.After(client.Expires) && !client.HasChanged {
@@ -173,15 +206,18 @@ func (sm *MapCache) RemoveStale() {
 	if len(forDeletion) == 0 {
 		return
 	}
+	// write lock pass
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	for i, c := range forDeletion {
 		forDeletion[i] = nil // make life easier for garbage collector
+		// refetch client from cache by api key to make sure it is still same object
 		client, ok := sm.cache[c.APIKey]
 		if !ok || client != c {
 			continue
 		}
 		client.Mu.RLock()
+		// recheck condition for deletion, since it may have been changed
 		if now.After(client.Expires) && !client.HasChanged {
 			delete(sm.cache, client.APIKey)
 			sm.pool.Put(client)

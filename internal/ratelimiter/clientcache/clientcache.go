@@ -5,6 +5,7 @@ import (
 	"github.com/SlayerSv/load-balancer/internal/models"
 )
 
+// ClientCache interface for rate limiter
 type ClientCache interface {
 	GetClient(APIKey string) (models.Client, error)
 	AddClient(client models.Client) error

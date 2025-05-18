@@ -2,7 +2,6 @@ package loadbalancer
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -16,24 +15,32 @@ import (
 	"github.com/SlayerSv/load-balancer/pkg"
 )
 
-var errNoAvailableBackends = errors.New("no available backends")
-
+// ILoadBalancer is the interface for load balancer service
 type ILoadBalancer interface {
 	GetBackend() (*Backend, error)
 	http.Handler
 }
 
+// LoadBalancer is the implementation of a ILoadBalancer using round robin algorithm
 type LoadBalancer struct {
+	// backends is the list of all backends to which load balancer will forward requests
 	backends []*Backend
-	current  atomic.Int64
-	cfg      *config.ConfigLoadBalancer
-	Log      logger.Logger
+	// current is the pointer to current backend in backends slice
+	current atomic.Int64
+	// cfg is the config for load balancer
+	cfg *config.ConfigLoadBalancer
+	// Log is the logger for load balancer
+	Log logger.Logger
 }
 
+// Backend represents backend instance for forwarding requests
 type Backend struct {
-	URL       *url.URL
+	// URL is the url object for parsed request url
+	URL *url.URL
+	// isHealthy reports if backend is currently healthy
 	isHealthy bool
-	mu        sync.RWMutex
+	// mu is RW mutex for accessing Backend
+	mu sync.RWMutex
 }
 
 func NewLoadBalancer(log logger.Logger, cfg *config.ConfigLoadBalancer) (*LoadBalancer, error) {
@@ -50,6 +57,8 @@ func NewLoadBalancer(log logger.Logger, cfg *config.ConfigLoadBalancer) (*LoadBa
 	return lb, nil
 }
 
+// GetBackend returns next healthy backend using round robin algorithm or error
+// if no backends are currently healthy
 func (lb *LoadBalancer) GetBackend() (*Backend, error) {
 	for range lb.backends {
 		ind := lb.current.Add(1) % int64(len(lb.backends))
@@ -60,13 +69,14 @@ func (lb *LoadBalancer) GetBackend() (*Backend, error) {
 			return b, nil
 		}
 	}
-	return nil, errNoAvailableBackends
+	return nil, apperrors.ErrServiceUnavailable
 }
 
 // StartHealthChecks launches a worker pool for periodic backend health checks
 func (lb *LoadBalancer) StartHealthChecks(ctx context.Context, wg *sync.WaitGroup) {
-	// Channel to distribute health check tasks
+	// tasks is the channel to distribute health check tasks
 	tasks := make(chan *Backend, len(lb.backends))
+	// client is the http client for doing health checks by goroutines
 	client := http.Client{
 		Timeout: time.Second * time.Duration(lb.cfg.HealthCheckTimeout),
 	}
@@ -94,6 +104,7 @@ func (lb *LoadBalancer) StartHealthChecks(ctx context.Context, wg *sync.WaitGrou
 		for {
 			select {
 			case <-ticker.C:
+				// put all backends in channel for health checks
 				for _, b := range lb.backends {
 					tasks <- b
 				}
@@ -108,8 +119,10 @@ func (lb *LoadBalancer) StartHealthChecks(ctx context.Context, wg *sync.WaitGrou
 // healthCheck performs a health check on a single backend
 func (lb *LoadBalancer) healthCheck(client http.Client, b *Backend) {
 	resp, err := client.Get(b.URL.String() + "/health")
+	// lock mutex AFTER get request for reducing lock times
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	// udpate state, log if state of backend changes
 	if err != nil || resp.StatusCode != http.StatusOK {
 		if b.isHealthy {
 			b.isHealthy = false
@@ -125,8 +138,8 @@ func (lb *LoadBalancer) healthCheck(client http.Client, b *Backend) {
 
 func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	backend, err := lb.GetBackend()
-	if errors.Is(err, errNoAvailableBackends) {
-		apperrors.Error(w, r, errNoAvailableBackends)
+	if err != nil {
+		apperrors.Error(w, r, err)
 		return
 	}
 	proxy := httputil.NewSingleHostReverseProxy(backend.URL)

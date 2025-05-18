@@ -24,18 +24,22 @@ type Slog struct {
 	logger *slog.Logger
 }
 
+// Info logs a message at the Info level with optional key-value pairs for structured logging.
 func (s *Slog) Info(msg string, keyVals ...any) {
 	s.logger.Info(msg, keyVals...)
 }
 
+// Warn logs a message at the Warn level with optional key-value pairs.
 func (s *Slog) Warn(msg string, keyVals ...any) {
 	s.logger.Warn(msg, keyVals...)
 }
 
+// Error logs a message at the Error level with optional key-value pairs.
 func (s *Slog) Error(msg string, keyVals ...any) {
 	s.logger.Error(msg, keyVals...)
 }
 
+// Debug logs a message at the Debug level with optional key-value pairs.
 func (s *Slog) Debug(msg string, keyVals ...any) {
 	s.logger.Debug(msg, keyVals...)
 }
@@ -47,6 +51,8 @@ func NewSlog(file *os.File, opts *slog.HandlerOptions) Logger {
 	}
 }
 
+// GetSlogLevel returns slog Level for Slog Handler options according to provided level string:
+// debug, warn, error (case insensitive). Any other value will return Info level.
 func GetSlogLevel(level string) slog.Level {
 	switch strings.ToLower(level) {
 	case "debug":

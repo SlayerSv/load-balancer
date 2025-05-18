@@ -28,22 +28,24 @@ type RateLimiterBucket struct {
 	clientHandler http.Handler
 }
 
-// NewRateLimiter creates a new RateLimiter with a database connection
+// NewRateLimiter creates a new RateLimiter
 func NewRateLimiterBucket(cfg *config.ConfigRateLimiter, DB database.DataBase, cache clientcache.ClientCache, log logger.Logger) *RateLimiterBucket {
 	rl := &RateLimiterBucket{Cfg: cfg, DB: DB, cache: cache, Log: log}
 	rl.clientHandler = rl.NewClientHandler()
 	return rl
 }
 
-// AllowRequest checks if a request is allowed based on the token bucket
+// AllowRequest checks if a client has a token for making a request.
+// It checks both the cache and the database. To prevent data races
+// and inconsistent states, token substraction goes through cache only.
+// So if a client is not in cache, but in database, it first loads client into
+// cache and tries to perform this opertion through cache again.
 func (rl *RateLimiterBucket) AllowRequest(APIKey string) error {
 	err := rl.cache.AllowRequest(APIKey)
 	if errors.Is(err, apperrors.ErrNotFound) {
-		rl.Log.Debug("Api key not found in cache", "api_key", APIKey)
 		client, err := rl.DB.GetClientByAPIKey(context.Background(), APIKey)
 		if err != nil {
 			if errors.Is(err, apperrors.ErrNotFound) {
-				rl.Log.Debug("Api key not found in database", "api_key", APIKey)
 				return fmt.Errorf("%w: invalid api key", apperrors.ErrUnauthorized)
 			}
 			return err
@@ -57,6 +59,8 @@ func (rl *RateLimiterBucket) AllowRequest(APIKey string) error {
 	return err
 }
 
+// AddTokensInterval runs periodic function for adding tokens to clients in cache.
+// Exits on canceling passed context.
 func (rl *RateLimiterBucket) AddTokensInterval(ctx context.Context, wg *sync.WaitGroup) {
 	wg.Add(1)
 	defer wg.Done()
@@ -72,6 +76,8 @@ func (rl *RateLimiterBucket) AddTokensInterval(ctx context.Context, wg *sync.Wai
 	}
 }
 
+// SaveStateInterval runs periodic function for saving clients in database.
+// Exits on canceling passed context.
 func (rl *RateLimiterBucket) SaveStateInterval(ctx context.Context, wg *sync.WaitGroup) {
 	wg.Add(1)
 	defer wg.Done()
@@ -87,6 +93,8 @@ func (rl *RateLimiterBucket) SaveStateInterval(ctx context.Context, wg *sync.Wai
 	}
 }
 
+// RemoveStaleInterval runs periodic function for removing stale clients from cache.
+// Exits on canceling passed context.
 func (rl *RateLimiterBucket) RemoveStaleInterval(ctx context.Context, wg *sync.WaitGroup) {
 	wg.Add(1)
 	defer wg.Done()

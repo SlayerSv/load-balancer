@@ -13,10 +13,12 @@ import (
 	"github.com/lib/pq"
 )
 
+// PostgreSQL is the postgres implementation for DataBase interface
 type PostgreSQL struct {
 	db *sql.DB
 }
 
+// NewPostgresDB returns new instance of PostgreSQL or error
 func NewPostgresDB() (*PostgreSQL, error) {
 	host, ok := os.LookupEnv("POSTGRES_HOST")
 	if !ok {
@@ -47,6 +49,7 @@ func NewPostgresDB() (*PostgreSQL, error) {
 	return &PostgreSQL{db}, nil
 }
 
+// GetClient gets client from database by clientID
 func (p *PostgreSQL) GetClient(ctx context.Context, clientID string) (models.Client, error) {
 	var client models.Client
 	row := p.db.QueryRowContext(ctx,
@@ -67,6 +70,7 @@ func (p *PostgreSQL) GetClient(ctx context.Context, clientID string) (models.Cli
 	return client, nil
 }
 
+// GetClientByAPIKey gets client from database by APIKey
 func (p *PostgreSQL) GetClientByAPIKey(ctx context.Context, clientAPIKey string) (models.Client, error) {
 	var client models.Client
 	row := p.db.QueryRowContext(ctx,
@@ -87,6 +91,7 @@ func (p *PostgreSQL) GetClientByAPIKey(ctx context.Context, clientAPIKey string)
 	return client, nil
 }
 
+// AddClient adds client to database. Fiels clientID and APIKey must be unique
 func (p *PostgreSQL) AddClient(ctx context.Context, client models.Client) (models.Client, error) {
 	var newClient models.Client
 	row := p.db.QueryRowContext(ctx,
@@ -114,6 +119,7 @@ func (p *PostgreSQL) AddClient(ctx context.Context, client models.Client) (model
 	return newClient, nil
 }
 
+// UpdateClient updates client's ratePerSec and Capacity in database.
 func (p *PostgreSQL) UpdateClient(ctx context.Context, client models.Client) (models.Client, error) {
 	var updatedClient models.Client
 	row := p.db.QueryRowContext(ctx,
@@ -141,6 +147,7 @@ func (p *PostgreSQL) UpdateClient(ctx context.Context, client models.Client) (mo
 	return updatedClient, nil
 }
 
+// UpdateClient deletes client from database.
 func (p *PostgreSQL) DeleteClient(ctx context.Context, clientID string) error {
 	_, err := p.db.ExecContext(ctx,
 		`DELETE FROM clients
@@ -155,6 +162,7 @@ func (p *PostgreSQL) DeleteClient(ctx context.Context, clientID string) error {
 	return nil
 }
 
+// UpdateTokens updates client Tokens and lastRefill date
 func (p *PostgreSQL) UpdateTokens(ctx context.Context, client models.Client) (models.Client, error) {
 	var updatedClient models.Client
 	row := p.db.QueryRowContext(ctx,

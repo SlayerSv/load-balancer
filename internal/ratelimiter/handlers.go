@@ -21,7 +21,9 @@ func (rl *RateLimiterBucket) NewClientHandler() http.Handler {
 	return mux
 }
 
-// rateLimitMiddleware wraps a handler with rate limiting
+// rateLimitMiddleware wraps a handler with rate limiting service
+// rerouts /clients requests to its own handler, for others checks
+// clients for api keys and tokens to allow access
 func (rl *RateLimiterBucket) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/clients") {
@@ -42,6 +44,7 @@ func (rl *RateLimiterBucket) Middleware(next http.Handler) http.Handler {
 	})
 }
 
+// GetClient return a client from database (client state may lag behind cache state)
 func (rl *RateLimiterBucket) GetClient(w http.ResponseWriter, r *http.Request) {
 	clientID := r.PathValue("client_id")
 	DBClient, err := rl.DB.GetClient(r.Context(), clientID)
@@ -49,12 +52,15 @@ func (rl *RateLimiterBucket) GetClient(w http.ResponseWriter, r *http.Request) {
 		apperrors.Error(w, r, err)
 		return
 	}
+	r.Header.Set("Content-Type", "application/json")
 	err = json.NewEncoder(w).Encode(DBClient)
 	if err != nil {
 		apperrors.Error(w, r, err)
 	}
 }
 
+// AddClient add a client to database, generates a new api key and returns
+// created client as json.
 func (rl *RateLimiterBucket) AddClient(w http.ResponseWriter, r *http.Request) {
 	var client models.Client
 	err := json.NewDecoder(r.Body).Decode(&client)
@@ -70,19 +76,21 @@ func (rl *RateLimiterBucket) AddClient(w http.ResponseWriter, r *http.Request) {
 	}
 	APIKey := base64.URLEncoding.EncodeToString(b)
 	client.APIKey = APIKey
-	rl.Log.Debug("Created client", "client", client)
 	newClient, err := rl.DB.AddClient(r.Context(), client)
 	if err != nil {
 		apperrors.Error(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
+	r.Header.Set("Content-Type", "application/json")
 	err = json.NewEncoder(w).Encode(newClient)
 	if err != nil {
 		apperrors.Error(w, r, err)
 	}
 }
 
+// UpdateClient updates client rate per sec and capacity both in database and in cache.
+// returns updated client as a json response.
 func (rl *RateLimiterBucket) UpdateClient(w http.ResponseWriter, r *http.Request) {
 	var client models.Client
 	err := json.NewDecoder(r.Body).Decode(&client)
@@ -96,6 +104,8 @@ func (rl *RateLimiterBucket) UpdateClient(w http.ResponseWriter, r *http.Request
 		apperrors.Error(w, r, errDB)
 		return
 	}
+	r.Header.Set("Content-Type", "application/json")
+	// update cache
 	cacheClient, errCache := rl.cache.UpdateClient(client)
 	if errCache != nil {
 		// return fresh state from cache
@@ -110,6 +120,7 @@ func (rl *RateLimiterBucket) UpdateClient(w http.ResponseWriter, r *http.Request
 	}
 }
 
+// DeleteClient Deletes client from database and cache.
 func (rl *RateLimiterBucket) DeleteClient(w http.ResponseWriter, r *http.Request) {
 	var client models.Client
 	err := json.NewDecoder(r.Body).Decode(&client)
