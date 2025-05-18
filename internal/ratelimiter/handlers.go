@@ -48,6 +48,7 @@ func (rl *RateLimiterBucket) GetClient(w http.ResponseWriter, r *http.Request) {
 	}
 	cacheClient, err := rl.cache.GetClient(client.APIKey)
 	if err == nil {
+		// return fresh state from cache
 		err = json.NewEncoder(w).Encode(cacheClient)
 		if err != nil {
 			apperrors.Error(w, r, err)
@@ -91,12 +92,21 @@ func (rl *RateLimiterBucket) UpdateClient(w http.ResponseWriter, r *http.Request
 		apperrors.Error(w, r, fmt.Errorf("%w: invalid request body", apperrors.ErrBadRequest))
 		return
 	}
-	updClient, err := rl.cache.UpdateClient(client)
-	if err != nil {
-		apperrors.Error(w, r, err)
+	// update database first
+	DBClient, errDB := rl.DB.UpdateClient(r.Context(), client)
+	if errDB != nil {
+		apperrors.Error(w, r, errDB)
 		return
 	}
-	err = json.NewEncoder(w).Encode(updClient)
+	cacheClient, errCache := rl.cache.UpdateClient(client)
+	if errCache != nil {
+		// return fresh state from cache
+		err = json.NewEncoder(w).Encode(cacheClient)
+		if err != nil {
+			apperrors.Error(w, r, err)
+		}
+	}
+	err = json.NewEncoder(w).Encode(DBClient)
 	if err != nil {
 		apperrors.Error(w, r, err)
 	}
@@ -109,10 +119,12 @@ func (rl *RateLimiterBucket) DeleteClient(w http.ResponseWriter, r *http.Request
 		apperrors.Error(w, r, fmt.Errorf("%w: invalid request body", apperrors.ErrBadRequest))
 		return
 	}
-	err = rl.cache.DeleteClient(client.APIKey)
-	if err != nil {
+	// delete from database first
+	errDB := rl.DB.DeleteClient(r.Context(), client.ClientID)
+	if errDB != nil {
 		apperrors.Error(w, r, err)
 		return
 	}
+	rl.cache.DeleteClient(client.APIKey)
 	w.WriteHeader(http.StatusNoContent)
 }

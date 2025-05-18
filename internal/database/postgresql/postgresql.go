@@ -118,21 +118,20 @@ func (p *PostgreSQL) UpdateClient(ctx context.Context, client models.Client) (mo
 	return updatedClient, nil
 }
 
-func (p *PostgreSQL) DeleteClient(ctx context.Context, clientID string) (models.Client, error) {
+func (p *PostgreSQL) DeleteClient(ctx context.Context, clientID string) error {
 	var deletedClient models.Client
 	row := p.db.QueryRowContext(ctx,
 		`DELETE FROM clients
 		WHERE
-			client_id = $1
-		RETURNING *;
+			client_id = $1;
 		`,
 		clientID,
 	)
 	err := row.Scan(&deletedClient)
 	if err != nil {
-		return deletedClient, fmt.Errorf("%w: %w", apperrors.ErrInternal, err)
+		return fmt.Errorf("%w: %w", apperrors.ErrInternal, err)
 	}
-	return deletedClient, nil
+	return nil
 }
 
 func (p *PostgreSQL) UpdateTokens(ctx context.Context, client models.Client) (models.Client, error) {

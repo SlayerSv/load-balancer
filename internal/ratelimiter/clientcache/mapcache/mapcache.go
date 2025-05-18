@@ -16,7 +16,6 @@ type MapCache struct {
 	Cfg   *config.ConfigRateLimiterCache
 	Log   logger.Logger
 	cache map[string]*models.ClientCache
-	DB    database.DataBase
 	pool  *sync.Pool
 	mu    sync.RWMutex
 }
@@ -87,9 +86,7 @@ func (sm *MapCache) UpdateClient(client models.Client) (models.Client, error) {
 	cl, has := sm.cache[client.APIKey]
 	if !has {
 		sm.Log.Debug("Client not found in cache", "client_id", client.ClientID, "api_key", client.APIKey)
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		return sm.DB.UpdateClient(ctx, client)
+		return models.Client{}, apperrors.ErrNotFound
 	}
 	cl.Mu.Lock()
 	defer cl.Mu.Unlock()
@@ -104,7 +101,7 @@ func (sm *MapCache) DeleteClient(APIKey string) error {
 	defer sm.mu.Unlock()
 	client, ok := sm.cache[APIKey]
 	if !ok {
-		return sm.DeleteClient(APIKey)
+		return apperrors.ErrNotFound
 	}
 	delete(sm.cache, APIKey)
 	sm.pool.Put(client)

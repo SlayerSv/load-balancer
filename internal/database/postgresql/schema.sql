@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS clients (
     rate_per_sec INT NOT NULL,
     CHECK(rate_per_sec > 0),
     tokens INT NOT NULL,
-    CHECK(tokens >= 0),
+    CHECK(tokens >= 0 AND tokens <= capacity),
     last_refill TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
