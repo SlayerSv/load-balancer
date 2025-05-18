@@ -1,9 +1,12 @@
 package ratelimiter
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/SlayerSv/load-balancer/internal/apperrors"
 	"github.com/SlayerSv/load-balancer/internal/models"
@@ -11,7 +14,7 @@ import (
 
 func (rl *RateLimiterBucket) NewClientHandler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /clients", rl.GetClient)
+	mux.HandleFunc("GET /clients/{client_id}", rl.GetClient)
 	mux.HandleFunc("POST /clients", rl.AddClient)
 	mux.HandleFunc("PATCH /clients", rl.UpdateClient)
 	mux.HandleFunc("DELETE /clients", rl.DeleteClient)
@@ -21,7 +24,7 @@ func (rl *RateLimiterBucket) NewClientHandler() http.Handler {
 // rateLimitMiddleware wraps a handler with rate limiting
 func (rl *RateLimiterBucket) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/clients" {
+		if strings.HasPrefix(r.URL.Path, "/clients") {
 			rl.clientHandler.ServeHTTP(w, r)
 			return
 		}
@@ -40,22 +43,8 @@ func (rl *RateLimiterBucket) Middleware(next http.Handler) http.Handler {
 }
 
 func (rl *RateLimiterBucket) GetClient(w http.ResponseWriter, r *http.Request) {
-	var client models.Client
-	err := json.NewDecoder(r.Body).Decode(&client)
-	if err != nil {
-		apperrors.Error(w, r, fmt.Errorf("%w: invalid request body", apperrors.ErrBadRequest))
-		return
-	}
-	cacheClient, err := rl.cache.GetClient(client.APIKey)
-	if err == nil {
-		// return fresh state from cache
-		err = json.NewEncoder(w).Encode(cacheClient)
-		if err != nil {
-			apperrors.Error(w, r, err)
-		}
-		return
-	}
-	DBClient, err := rl.DB.GetClient(r.Context(), client.APIKey)
+	clientID := r.PathValue("client_id")
+	DBClient, err := rl.DB.GetClient(r.Context(), clientID)
 	if err != nil {
 		apperrors.Error(w, r, err)
 		return
@@ -73,6 +62,15 @@ func (rl *RateLimiterBucket) AddClient(w http.ResponseWriter, r *http.Request) {
 		apperrors.Error(w, r, fmt.Errorf("%w: invalid request body", apperrors.ErrBadRequest))
 		return
 	}
+	b := make([]byte, 32)
+	_, err = rand.Read(b)
+	if err != nil {
+		apperrors.Error(w, r, err)
+		return
+	}
+	APIKey := base64.URLEncoding.EncodeToString(b)
+	client.APIKey = APIKey
+	rl.Log.Debug("Created client", "client", client)
 	newClient, err := rl.DB.AddClient(r.Context(), client)
 	if err != nil {
 		apperrors.Error(w, r, err)

@@ -15,6 +15,7 @@ import (
 	"github.com/SlayerSv/load-balancer/pkg"
 )
 
+// App represents this application with all essential services
 type App struct {
 	Cfg           *config.Config
 	DB            database.DataBase
@@ -34,6 +35,8 @@ func NewApp(cfg *config.Config, DB database.DataBase, LB *loadbalancer.LoadBalan
 	}
 }
 
+// Middleware is entrypoint for all requests. It defers recover panics,
+// assigns to each request id and puts it in request contest for tracking and logging
 func (app *App) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
@@ -46,7 +49,7 @@ func (app *App) Middleware(next http.Handler) http.Handler {
 		ID := app.nextRequestID.Add(1)
 		ctx := context.WithValue(r.Context(), pkg.RequestID, ID)
 		r = r.Clone(ctx)
-		app.Log.Info("Incoming request", "method", "request_id", ID, r.Method, "path", r.URL.Path, "remote_address", r.RemoteAddr)
+		app.Log.Info("Incoming request", "method", r.Method, "request_id", ID, r.Method, "path", r.URL.Path, "remote_address", r.RemoteAddr)
 		next.ServeHTTP(w, r)
 	})
 }

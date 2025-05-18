@@ -63,6 +63,7 @@ func (sm *MapCache) AddClient(client models.Client) error {
 	cl := sm.pool.Get().(*models.ClientCache)
 	cl.Copy(client)
 	cl.Expires = time.Now().Add(time.Duration(sm.Cfg.TimeToLive) * time.Second)
+	sm.AddTokens(cl)
 	sm.cache[client.APIKey] = cl
 	sm.Log.Debug("Added client to cache", "client_id", client.ClientID, "api_key", client.APIKey)
 	return nil
@@ -111,23 +112,28 @@ func (sm *MapCache) DeleteClient(APIKey string) error {
 func (sm *MapCache) AddTokensToAll() {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	now := time.Now()
+
 	for _, client := range sm.cache {
-		client.Mu.Lock()
-		if client.Tokens == client.Capacity {
-			client.Mu.Unlock()
-			continue
-		}
-		// Refill tokens based on elapsed time
-		elapsed := now.Sub(client.LastRefill).Seconds()
-		tokensToAdd := int(elapsed * float64(client.RatePerSec))
-		if tokensToAdd > 0 && client.Tokens != client.Capacity {
-			client.Tokens = min(client.Capacity, client.Tokens+tokensToAdd)
-			client.LastRefill = now
-			client.HasChanged = true
-		}
-		client.Mu.Unlock()
+		sm.AddTokens(client)
 	}
+}
+
+func (sm *MapCache) AddTokens(client *models.ClientCache) {
+	client.Mu.Lock()
+	defer client.Mu.Unlock()
+	if client.Tokens == client.Capacity {
+		return
+	}
+	now := time.Now()
+	// Refill tokens based on elapsed time
+	elapsed := now.Sub(client.LastRefill).Seconds()
+	tokensToAdd := int(elapsed * float64(client.RatePerSec))
+	if tokensToAdd > 0 && client.Tokens != client.Capacity {
+		client.Tokens = min(client.Capacity, client.Tokens+tokensToAdd)
+		client.LastRefill = now
+		client.HasChanged = true
+	}
+	sm.Log.Debug("Added tokens", "client", &client, "tokens", tokensToAdd, "elapsed", elapsed, "now", now)
 }
 
 func (sm *MapCache) SaveState(DB database.DataBase) {

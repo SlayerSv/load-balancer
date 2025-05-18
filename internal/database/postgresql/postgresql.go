@@ -47,7 +47,27 @@ func NewPostgresDB() (*PostgreSQL, error) {
 	return &PostgreSQL{db}, nil
 }
 
-func (p *PostgreSQL) GetClient(ctx context.Context, clientAPIKey string) (models.Client, error) {
+func (p *PostgreSQL) GetClient(ctx context.Context, clientID string) (models.Client, error) {
+	var client models.Client
+	row := p.db.QueryRowContext(ctx,
+		`SELECT * FROM clients
+		WHERE
+			client_id = $1;
+		`,
+		clientID,
+	)
+	err := row.Scan(&client.ClientID, &client.APIKey, &client.Capacity,
+		&client.RatePerSec, &client.Tokens, &client.LastRefill)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return client, apperrors.ErrNotFound
+		}
+		return client, fmt.Errorf("%w: %w", apperrors.ErrInternal, err)
+	}
+	return client, nil
+}
+
+func (p *PostgreSQL) GetClientByAPIKey(ctx context.Context, clientAPIKey string) (models.Client, error) {
 	var client models.Client
 	row := p.db.QueryRowContext(ctx,
 		`SELECT * FROM clients
@@ -56,7 +76,8 @@ func (p *PostgreSQL) GetClient(ctx context.Context, clientAPIKey string) (models
 		`,
 		clientAPIKey,
 	)
-	err := row.Scan(&client)
+	err := row.Scan(&client.ClientID, &client.APIKey, &client.Capacity,
+		&client.RatePerSec, &client.Tokens, &client.LastRefill)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return client, apperrors.ErrNotFound
@@ -77,7 +98,8 @@ func (p *PostgreSQL) AddClient(ctx context.Context, client models.Client) (model
 		`,
 		client.ClientID, client.APIKey, client.Capacity, client.RatePerSec,
 	)
-	err := row.Scan(&newClient)
+	err := row.Scan(&newClient.ClientID, &newClient.APIKey, &newClient.Capacity,
+		&newClient.RatePerSec, &newClient.Tokens, &newClient.LastRefill)
 	if err != nil {
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) {
@@ -108,7 +130,8 @@ func (p *PostgreSQL) UpdateClient(ctx context.Context, client models.Client) (mo
 		`,
 		client.Capacity, client.RatePerSec, client.ClientID,
 	)
-	err := row.Scan(&updatedClient)
+	err := row.Scan(&updatedClient.ClientID, &updatedClient.APIKey, &updatedClient.Capacity,
+		&updatedClient.RatePerSec, &updatedClient.Tokens, &updatedClient.LastRefill)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return client, apperrors.ErrNotFound
@@ -119,15 +142,13 @@ func (p *PostgreSQL) UpdateClient(ctx context.Context, client models.Client) (mo
 }
 
 func (p *PostgreSQL) DeleteClient(ctx context.Context, clientID string) error {
-	var deletedClient models.Client
-	row := p.db.QueryRowContext(ctx,
+	_, err := p.db.ExecContext(ctx,
 		`DELETE FROM clients
 		WHERE
 			client_id = $1;
 		`,
 		clientID,
 	)
-	err := row.Scan(&deletedClient)
 	if err != nil {
 		return fmt.Errorf("%w: %w", apperrors.ErrInternal, err)
 	}
@@ -146,7 +167,8 @@ func (p *PostgreSQL) UpdateTokens(ctx context.Context, client models.Client) (mo
 		`,
 		client.Tokens, client.LastRefill, client.ClientID,
 	)
-	err := row.Scan(&updatedClient)
+	err := row.Scan(&updatedClient.ClientID, &updatedClient.APIKey, &updatedClient.Capacity,
+		&updatedClient.RatePerSec, &updatedClient.Tokens, &updatedClient.LastRefill)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return updatedClient, apperrors.ErrNotFound

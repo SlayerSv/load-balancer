@@ -1,14 +1,14 @@
 {
-    "port": "8080",
-    "log_level": "info",
+    "port": 8080,
+    "log_level": "debug",
     "load_balancer": {
-        "backend_urls": ["localhost:8081", "localhost:8082"],
+        "backend_urls": ["http://localhost:8081", "http://localhost:8082"],
         "health_check_interval": 10,
         "worker_count": 2,
         "health_check_timeout": 1
     },
     "rate_limiter": {
-        "add_tokens_interval": 1,
+        "add_tokens_interval": 5,
         "save_state_interval": 10,
         "remove_stale_interval": 300,
         "cache": {

@@ -39,9 +39,11 @@ func NewRateLimiterBucket(cfg *config.ConfigRateLimiter, DB database.DataBase, c
 func (rl *RateLimiterBucket) AllowRequest(APIKey string) error {
 	err := rl.cache.AllowRequest(APIKey)
 	if errors.Is(err, apperrors.ErrNotFound) {
-		client, err := rl.DB.GetClient(context.Background(), APIKey)
+		rl.Log.Debug("Api key not found in cache", "api_key", APIKey)
+		client, err := rl.DB.GetClientByAPIKey(context.Background(), APIKey)
 		if err != nil {
 			if errors.Is(err, apperrors.ErrNotFound) {
+				rl.Log.Debug("Api key not found in database", "api_key", APIKey)
 				return fmt.Errorf("%w: invalid api key", apperrors.ErrUnauthorized)
 			}
 			return err

@@ -37,9 +37,9 @@ type Backend struct {
 }
 
 func NewLoadBalancer(log logger.Logger, cfg *config.ConfigLoadBalancer) (*LoadBalancer, error) {
-	lb := &LoadBalancer{Log: log}
-	lb.backends = make([]*Backend, 0, len(cfg.BackendURLs))
-	for _, u := range cfg.BackendURLs {
+	lb := &LoadBalancer{Log: log, cfg: cfg}
+	lb.backends = make([]*Backend, 0, len(lb.cfg.BackendURLs))
+	for _, u := range lb.cfg.BackendURLs {
 		parsedURL, err := url.Parse(u)
 		if err != nil {
 			return nil, err
@@ -70,7 +70,7 @@ func (lb *LoadBalancer) StartHealthChecks(ctx context.Context, wg *sync.WaitGrou
 	client := http.Client{
 		Timeout: time.Second * time.Duration(lb.cfg.HealthCheckTimeout),
 	}
-	for range lb.cfg.WorkerCount {
+	for range lb.cfg.HealthCheckWorkerCount {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -116,7 +116,7 @@ func (lb *LoadBalancer) healthCheck(client http.Client, b *Backend) {
 			lb.Log.Warn("Backend is down", "backend_url", b.URL.String(), "error", err)
 		}
 	} else {
-		if b.isHealthy {
+		if !b.isHealthy {
 			b.isHealthy = true
 			lb.Log.Info("Backend is up", "backend_url", b.URL.String())
 		}
@@ -130,6 +130,6 @@ func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	proxy := httputil.NewSingleHostReverseProxy(backend.URL)
-	lb.Log.Info("Forwarding request", pkg.RequestID, r.Context().Value(pkg.RequestID), "backend_url", backend.URL.Path)
+	lb.Log.Info("Forwarding request", "request_id", r.Context().Value(pkg.RequestID), "backend_url", backend.URL.Path)
 	proxy.ServeHTTP(w, r)
 }

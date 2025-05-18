@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/SlayerSv/load-balancer/internal/app"
+	"github.com/SlayerSv/load-balancer/internal/apperrors"
 	"github.com/SlayerSv/load-balancer/internal/config"
 	"github.com/SlayerSv/load-balancer/internal/database/postgresql"
 	"github.com/SlayerSv/load-balancer/internal/loadbalancer"
@@ -35,6 +36,7 @@ func main() {
 	}
 	level := logger.GetSlogLevel(cfg.LogLevel)
 	log := logger.NewSlog(os.Stdout, &slog.HandlerOptions{Level: level})
+	apperrors.Log = log
 	lb, err := loadbalancer.NewLoadBalancer(log, &cfg.LoadBalancer)
 	if err != nil {
 		log.Error("Creating load balancer", "error", err)
@@ -78,8 +80,8 @@ func main() {
 	err = server.Shutdown(ctx1)
 	wg.Wait()
 	if err != nil {
-		slog.Error("Server shutdown failed", "error", err)
+		log.Error("Server shutdown failed", "error", err)
 	} else {
-		slog.Info("Server shutdown successfully")
+		log.Info("Server shutdown successfully")
 	}
 }

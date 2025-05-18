@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+
+	"github.com/SlayerSv/load-balancer/internal/logger"
+	"github.com/SlayerSv/load-balancer/pkg"
 )
 
 var ErrAlreadyExists = errors.New("already exists")
@@ -18,8 +21,11 @@ type ErrorResponse struct {
 	Message string `json:"message"`
 }
 
+var Log logger.Logger
+
 func Error(w http.ResponseWriter, r *http.Request, err error) {
 	w.Header().Set("Content-Type", "application/json")
+	Log.Error("Error serving request", "request_id", r.Context().Value(pkg.RequestID), "error", err)
 	var code int
 	switch {
 	case errors.Is(err, ErrAlreadyExists):
