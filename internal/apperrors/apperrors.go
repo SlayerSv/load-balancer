@@ -30,7 +30,6 @@ var Log logger.Logger
 // Error writes error message to client in json format
 func Error(w http.ResponseWriter, r *http.Request, err error) {
 	w.Header().Set("Content-Type", "application/json")
-	Log.Error("Error serving request", "request_id", r.Context().Value(pkg.RequestID), "error", err)
 	var code int
 	switch {
 	case errors.Is(err, ErrAlreadyExists):
@@ -47,7 +46,12 @@ func Error(w http.ResponseWriter, r *http.Request, err error) {
 		code = http.StatusServiceUnavailable
 	default:
 		code = http.StatusInternalServerError
+	}
+	if code == http.StatusInternalServerError {
+		Log.Error("Error serving request", "request_id", r.Context().Value(pkg.RequestID), "error", err)
 		err = ErrInternal
+	} else {
+		Log.Info("Sending error response", "request_id", r.Context().Value(pkg.RequestID), "code", code, "message", err.Error())
 	}
 	errorResponse := ErrorResponse{
 		Code:    code,

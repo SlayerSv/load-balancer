@@ -135,9 +135,11 @@ func (sm *MapCache) DeleteClient(APIKey string) error {
 func (sm *MapCache) AddTokensToAll() {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
+	sm.Log.Debug("Starting adding tokens to clients")
 	for _, client := range sm.cache {
 		sm.AddTokens(client)
 	}
+	sm.Log.Debug("Finished adding tokens to clients")
 }
 
 // AddTokens adds tokens to a client based on elapsed time since
@@ -164,6 +166,7 @@ func (sm *MapCache) AddTokens(client *models.ClientCache) {
 func (sm *MapCache) SaveState(DB database.DataBase) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
+	sm.Log.Debug("Starting saving state of clients")
 	for _, client := range sm.cache {
 		client.Mu.Lock()
 		if !client.HasChanged {
@@ -181,6 +184,7 @@ func (sm *MapCache) SaveState(DB database.DataBase) {
 		client.HasChanged = false
 		client.Mu.Unlock()
 	}
+	sm.Log.Debug("Finished saving state of clients")
 }
 
 // RemoveStale removes clients from cache, whose Expires field has passed current time.
@@ -191,6 +195,9 @@ func (sm *MapCache) SaveState(DB database.DataBase) {
 func (sm *MapCache) RemoveStale() {
 	// first pass is read only for performance
 	sm.mu.RLock()
+	removed := 0
+	sm.Log.Debug("Starting removing old clients from cache")
+	defer sm.Log.Debug("Finished removing old clients from cache", "removed", removed)
 	// slices for candidates for removal
 	forDeletion := make([]*models.ClientCache, 0)
 	now := time.Now()
@@ -219,6 +226,7 @@ func (sm *MapCache) RemoveStale() {
 		client.Mu.RLock()
 		// recheck condition for deletion, since it may have been changed
 		if now.After(client.Expires) && !client.HasChanged {
+			removed++
 			delete(sm.cache, client.APIKey)
 			sm.pool.Put(client)
 		}

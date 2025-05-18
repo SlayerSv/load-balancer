@@ -55,7 +55,7 @@ func (rl *RateLimiterBucket) GetClient(w http.ResponseWriter, r *http.Request) {
 		apperrors.Error(w, r, err)
 		return
 	}
-	r.Header.Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json")
 	err = json.NewEncoder(w).Encode(DBClient)
 	if err != nil {
 		apperrors.Error(w, r, err)
@@ -79,13 +79,19 @@ func (rl *RateLimiterBucket) AddClient(w http.ResponseWriter, r *http.Request) {
 	}
 	APIKey := base64.URLEncoding.EncodeToString(b)
 	client.APIKey = APIKey
+	if client.RatePerSec < 1 {
+		client.RatePerSec = rl.Cfg.DefaultRatePerSec
+	}
+	if client.Capacity < 1 {
+		client.Capacity = rl.Cfg.DefaultCapacity
+	}
 	newClient, err := rl.DB.AddClient(r.Context(), client)
 	if err != nil {
 		apperrors.Error(w, r, err)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	r.Header.Set("Content-Type", "application/json")
 	err = json.NewEncoder(w).Encode(newClient)
 	if err != nil {
 		apperrors.Error(w, r, err)
@@ -107,16 +113,17 @@ func (rl *RateLimiterBucket) UpdateClient(w http.ResponseWriter, r *http.Request
 		apperrors.Error(w, r, errDB)
 		return
 	}
-	r.Header.Set("Content-Type", "application/json")
 	// update cache
 	cacheClient, errCache := rl.cache.UpdateClient(client)
-	if errCache != nil {
+	if errCache == nil {
 		// return fresh state from cache
 		err = json.NewEncoder(w).Encode(cacheClient)
 		if err != nil {
 			apperrors.Error(w, r, err)
 		}
+		return
 	}
+	w.Header().Set("Content-Type", "application/json")
 	err = json.NewEncoder(w).Encode(DBClient)
 	if err != nil {
 		apperrors.Error(w, r, err)

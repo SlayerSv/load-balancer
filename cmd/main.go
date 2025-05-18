@@ -35,7 +35,7 @@ func main() {
 		os.Exit(1)
 	}
 	level := logger.GetSlogLevel(cfg.LogLevel)
-	log := logger.NewSlog(os.Stdout, &slog.HandlerOptions{Level: level})
+	log := logger.NewSlog(cfg.LogFile, &slog.HandlerOptions{Level: level})
 	apperrors.Log = log
 	lb, err := loadbalancer.NewLoadBalancer(log, &cfg.LoadBalancer)
 	if err != nil {
@@ -63,10 +63,10 @@ func main() {
 	}()
 
 	// start services
-	lb.StartHealthChecks(ctx, wg)
-	rl.AddTokensInterval(ctx, wg)
-	rl.SaveStateInterval(ctx, wg)
-	rl.RemoveStaleInterval(ctx, wg)
+	go lb.StartHealthChecks(ctx, wg)
+	go rl.AddTokensInterval(ctx, wg)
+	go rl.SaveStateInterval(ctx, wg)
+	go rl.RemoveStaleInterval(ctx, wg)
 
 	// Handle graceful shutdown
 	sigChan := make(chan os.Signal, 1)

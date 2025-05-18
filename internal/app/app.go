@@ -49,7 +49,7 @@ func (app *App) Middleware(next http.Handler) http.Handler {
 		ID := app.nextRequestID.Add(1)
 		ctx := context.WithValue(r.Context(), pkg.RequestID, ID)
 		r = r.Clone(ctx)
-		app.Log.Info("Incoming request", "method", r.Method, "request_id", ID, r.Method, "path", r.URL.Path, "remote_address", r.RemoteAddr)
+		app.Log.Info("Incoming request", "method", r.Method, "request_id", ID, "path", r.URL.Path, "remote_address", r.RemoteAddr)
 		next.ServeHTTP(w, r)
 	})
 }

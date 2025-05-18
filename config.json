@@ -1,18 +1,22 @@
 {
     "port": 8080,
     "log_level": "debug",
+    "log_file": "",
     "load_balancer": {
         "backend_urls": ["http://localhost:8081", "http://localhost:8082"],
         "health_check_interval": 10,
-        "worker_count": 2,
-        "health_check_timeout": 1
+        "health_check_worker_count": 2,
+        "max_retries": 2,
+        "request_timeout": 2
     },
     "rate_limiter": {
         "add_tokens_interval": 5,
         "save_state_interval": 10,
-        "remove_stale_interval": 300,
+        "remove_stale_interval": 10,
+        "default_rate_per_sec": 5,
+        "default_capacity": 20,
         "cache": {
-            "time_to_live": 300
+            "time_to_live": 10
         }
     }
 }

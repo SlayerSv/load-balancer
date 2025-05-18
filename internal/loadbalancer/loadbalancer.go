@@ -2,6 +2,8 @@ package loadbalancer
 
 import (
 	"context"
+	"io"
+	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -74,21 +76,24 @@ func (lb *LoadBalancer) GetBackend() (*Backend, error) {
 
 // StartHealthChecks launches a worker pool for periodic backend health checks
 func (lb *LoadBalancer) StartHealthChecks(ctx context.Context, wg *sync.WaitGroup) {
+	lb.Log.Debug("Starting health check service")
 	// tasks is the channel to distribute health check tasks
 	tasks := make(chan *Backend, len(lb.backends))
 	// client is the http client for doing health checks by goroutines
 	client := http.Client{
-		Timeout: time.Second * time.Duration(lb.cfg.HealthCheckTimeout),
+		Timeout: time.Second * time.Duration(lb.cfg.RequestTimeout),
 	}
 	for range lb.cfg.HealthCheckWorkerCount {
 		wg.Add(1)
 		go func() {
+			lb.Log.Debug("Starting health check worker")
 			defer wg.Done()
 			for {
 				select {
 				case b := <-tasks:
 					lb.healthCheck(client, b)
 				case <-ctx.Done():
+					lb.Log.Debug("Shutting down health check worker")
 					return
 				}
 			}
@@ -105,11 +110,13 @@ func (lb *LoadBalancer) StartHealthChecks(ctx context.Context, wg *sync.WaitGrou
 			select {
 			case <-ticker.C:
 				// put all backends in channel for health checks
+				lb.Log.Debug("Starting health checks for all backends")
 				for _, b := range lb.backends {
 					tasks <- b
 				}
 			case <-ctx.Done():
 				close(tasks)
+				lb.Log.Debug("Shutting down health check service")
 				return
 			}
 		}
@@ -134,15 +141,64 @@ func (lb *LoadBalancer) healthCheck(client http.Client, b *Backend) {
 			lb.Log.Info("Backend is up", "backend_url", b.URL.String())
 		}
 	}
+	lb.Log.Debug("Finished health check on backend", "backend", b.URL.Path, "is_healthy", b.isHealthy)
 }
 
 func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	backend, err := lb.GetBackend()
-	if err != nil {
-		apperrors.Error(w, r, err)
+	for range lb.cfg.MaxRetries {
+		backend, err := lb.GetBackend()
+		if err != nil {
+			lb.Log.Warn("No healthy backends available", "request_id", r.Context().Value(pkg.RequestID))
+			apperrors.Error(w, r, err)
+			return
+		}
+		// Create a new proxy for the backend
+		proxy := httputil.NewSingleHostReverseProxy(backend.URL)
+		proxy.Transport = &http.Transport{
+			ResponseHeaderTimeout: time.Second * time.Duration(lb.cfg.RequestTimeout),
+		}
+		proxy.ErrorLog = log.New(io.Discard, "", 0)
+		// Capture the response to check for errors
+		recorder := &responseRecorder{ResponseWriter: w}
+		proxy.ServeHTTP(recorder, r)
+		// Check if the response indicates a backend failure
+		if recorder.statusCode >= 500 || recorder.statusCode == http.StatusBadGateway ||
+			recorder.statusCode == http.StatusServiceUnavailable ||
+			recorder.statusCode == http.StatusGatewayTimeout {
+			backend.mu.Lock()
+			backend.isHealthy = false
+			backend.mu.Unlock()
+			lb.Log.Warn("Request to backend failed", "request_id", r.Context().Value(pkg.RequestID),
+				"backend_url", backend.URL.String(), "status_code", recorder.statusCode)
+			continue
+		}
+		recorder.writeResponse(w)
+		lb.Log.Info("Request forwarded sucessfully", "request_id", r.Context().Value(pkg.RequestID),
+			"backend_url", backend.URL.String())
 		return
 	}
-	proxy := httputil.NewSingleHostReverseProxy(backend.URL)
-	lb.Log.Info("Forwarding request", "request_id", r.Context().Value(pkg.RequestID), "backend_url", backend.URL.Path)
-	proxy.ServeHTTP(w, r)
+	apperrors.Error(w, r, apperrors.ErrServiceUnavailable)
+}
+
+// responseRecorder captures the response from the proxy to inspect status codes
+type responseRecorder struct {
+	http.ResponseWriter
+	statusCode int
+	body       []byte
+}
+
+func (r *responseRecorder) WriteHeader(statusCode int) {
+	r.statusCode = statusCode
+}
+
+func (r *responseRecorder) Write(b []byte) (int, error) {
+	r.body = append(r.body, b...)
+	return len(b), nil
+}
+
+func (r *responseRecorder) writeResponse(w http.ResponseWriter) {
+	if r.statusCode != 0 {
+		w.WriteHeader(r.statusCode)
+	}
+	w.Write(r.body)
 }

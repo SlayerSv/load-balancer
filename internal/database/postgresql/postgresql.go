@@ -61,13 +61,7 @@ func (p *PostgreSQL) GetClient(ctx context.Context, clientID string) (models.Cli
 	)
 	err := row.Scan(&client.ClientID, &client.APIKey, &client.Capacity,
 		&client.RatePerSec, &client.Tokens, &client.LastRefill)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return models.Client{}, apperrors.ErrNotFound
-		}
-		return models.Client{}, fmt.Errorf("%w: %w", apperrors.ErrInternal, err)
-	}
-	return client, nil
+	return client, p.WrapError(err)
 }
 
 // GetClientByAPIKey gets client from database by APIKey
@@ -82,13 +76,7 @@ func (p *PostgreSQL) GetClientByAPIKey(ctx context.Context, clientAPIKey string)
 	)
 	err := row.Scan(&client.ClientID, &client.APIKey, &client.Capacity,
 		&client.RatePerSec, &client.Tokens, &client.LastRefill)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return models.Client{}, apperrors.ErrNotFound
-		}
-		return models.Client{}, fmt.Errorf("%w: %w", apperrors.ErrInternal, err)
-	}
-	return client, nil
+	return client, p.WrapError(err)
 }
 
 // AddClient adds client to database. Fiels clientID and APIKey must be unique
@@ -105,46 +93,30 @@ func (p *PostgreSQL) AddClient(ctx context.Context, client models.Client) (model
 	)
 	err := row.Scan(&newClient.ClientID, &newClient.APIKey, &newClient.Capacity,
 		&newClient.RatePerSec, &newClient.Tokens, &newClient.LastRefill)
-	if err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) {
-			switch pqErr.Code {
-			case "23505":
-				return models.Client{}, fmt.Errorf("%w: %w", apperrors.ErrAlreadyExists, err)
-			default:
-				return models.Client{}, fmt.Errorf("%w: %w", apperrors.ErrInternal, err)
-			}
-		}
-	}
-	return newClient, nil
+	return newClient, p.WrapError(err)
 }
 
 // UpdateClient updates client's ratePerSec and Capacity in database.
 func (p *PostgreSQL) UpdateClient(ctx context.Context, client models.Client) (models.Client, error) {
 	var updatedClient models.Client
 	row := p.db.QueryRowContext(ctx,
-		`UPDATE items
+		`UPDATE clients
 		SET
 			capacity = $1,
-			rate_per_sec = $2
+			rate_per_sec = $2,
 			tokens = CASE
 				WHEN $1 < tokens
 				THEN $1
 				ELSE tokens
 				END
-		WHERE id = $3;
+		WHERE client_id = $3
+		RETURNING *;
 		`,
 		client.Capacity, client.RatePerSec, client.ClientID,
 	)
 	err := row.Scan(&updatedClient.ClientID, &updatedClient.APIKey, &updatedClient.Capacity,
 		&updatedClient.RatePerSec, &updatedClient.Tokens, &updatedClient.LastRefill)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return models.Client{}, apperrors.ErrNotFound
-		}
-		return models.Client{}, fmt.Errorf("%w: %w", apperrors.ErrInternal, err)
-	}
-	return updatedClient, nil
+	return updatedClient, p.WrapError(err)
 }
 
 // UpdateClient deletes client from database.
@@ -160,13 +132,7 @@ func (p *PostgreSQL) DeleteClient(ctx context.Context, clientID string) (models.
 	var deletedClient models.Client
 	err := row.Scan(&deletedClient.ClientID, &deletedClient.APIKey, &deletedClient.Capacity,
 		&deletedClient.RatePerSec, &deletedClient.Tokens, &deletedClient.LastRefill)
-	if errors.Is(err, sql.ErrNoRows) {
-		return models.Client{}, apperrors.ErrNotFound
-	}
-	if err != nil {
-		return models.Client{}, fmt.Errorf("%w: %w", apperrors.ErrInternal, err)
-	}
-	return deletedClient, nil
+	return deletedClient, p.WrapError(err)
 }
 
 // UpdateTokens updates client Tokens and lastRefill date
@@ -184,11 +150,26 @@ func (p *PostgreSQL) UpdateTokens(ctx context.Context, client models.Client) (mo
 	)
 	err := row.Scan(&updatedClient.ClientID, &updatedClient.APIKey, &updatedClient.Capacity,
 		&updatedClient.RatePerSec, &updatedClient.Tokens, &updatedClient.LastRefill)
+	return updatedClient, p.WrapError(err)
+}
+
+func (p *PostgreSQL) WrapError(err error) error {
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return models.Client{}, apperrors.ErrNotFound
+			return apperrors.ErrNotFound
 		}
-		return models.Client{}, fmt.Errorf("%w: %w", apperrors.ErrInternal, err)
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) {
+			switch pqErr.Code {
+			case "23514":
+				return apperrors.ErrBadRequest
+			case "23505":
+				return apperrors.ErrAlreadyExists
+			default:
+				return fmt.Errorf("%w: %w", apperrors.ErrInternal, err)
+			}
+		}
+		return fmt.Errorf("%w: %w", apperrors.ErrInternal, err)
 	}
-	return updatedClient, nil
+	return nil
 }

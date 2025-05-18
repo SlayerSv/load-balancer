@@ -62,6 +62,7 @@ func (rl *RateLimiterBucket) AllowRequest(APIKey string) error {
 // AddTokensInterval runs periodic function for adding tokens to clients in cache.
 // Exits on canceling passed context.
 func (rl *RateLimiterBucket) AddTokensInterval(ctx context.Context, wg *sync.WaitGroup) {
+	rl.Log.Debug("Starting add tokens service")
 	wg.Add(1)
 	defer wg.Done()
 	ticker := time.NewTicker(time.Duration(rl.Cfg.AddTokensInterval) * time.Second)
@@ -71,6 +72,7 @@ func (rl *RateLimiterBucket) AddTokensInterval(ctx context.Context, wg *sync.Wai
 		case <-ticker.C:
 			rl.cache.AddTokensToAll()
 		case <-ctx.Done():
+			rl.Log.Debug("Shutting down add tokens service")
 			return
 		}
 	}
@@ -79,6 +81,7 @@ func (rl *RateLimiterBucket) AddTokensInterval(ctx context.Context, wg *sync.Wai
 // SaveStateInterval runs periodic function for saving clients in database.
 // Exits on canceling passed context.
 func (rl *RateLimiterBucket) SaveStateInterval(ctx context.Context, wg *sync.WaitGroup) {
+	rl.Log.Debug("Starting save state service")
 	wg.Add(1)
 	defer wg.Done()
 	ticker := time.NewTicker(time.Duration(rl.Cfg.SaveStateInterval) * time.Second)
@@ -88,6 +91,7 @@ func (rl *RateLimiterBucket) SaveStateInterval(ctx context.Context, wg *sync.Wai
 		case <-ticker.C:
 			rl.cache.SaveState(rl.DB)
 		case <-ctx.Done():
+			rl.Log.Debug("Shutting down save state service")
 			return
 		}
 	}
@@ -96,6 +100,7 @@ func (rl *RateLimiterBucket) SaveStateInterval(ctx context.Context, wg *sync.Wai
 // RemoveStaleInterval runs periodic function for removing stale clients from cache.
 // Exits on canceling passed context.
 func (rl *RateLimiterBucket) RemoveStaleInterval(ctx context.Context, wg *sync.WaitGroup) {
+	rl.Log.Debug("Starting remove stale service")
 	wg.Add(1)
 	defer wg.Done()
 	ticker := time.NewTicker(time.Duration(rl.Cfg.RemoveStaleInterval) * time.Second)
@@ -105,6 +110,7 @@ func (rl *RateLimiterBucket) RemoveStaleInterval(ctx context.Context, wg *sync.W
 		case <-ticker.C:
 			rl.cache.RemoveStale()
 		case <-ctx.Done():
+			rl.Log.Debug("Shutting down remove stale service")
 			return
 		}
 	}

@@ -45,7 +45,14 @@ func (s *Slog) Debug(msg string, keyVals ...any) {
 }
 
 // NewSlog creates a Logger using slog.
-func NewSlog(file *os.File, opts *slog.HandlerOptions) Logger {
+func NewSlog(logFilePath string, opts *slog.HandlerOptions) Logger {
+	var file *os.File
+	if logFilePath != "" {
+		file, _ = os.OpenFile(logFilePath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
+	}
+	if file == nil {
+		file = os.Stdout
+	}
 	return &Slog{
 		slog.New(slog.NewJSONHandler(file, opts)),
 	}
