@@ -105,8 +105,8 @@ status 204 no content
 ```json
 {
     "port": 8080,
-    "log_level": "debug",
-    "log_file": "path_to_file",
+    "log_level": "debug/info/warn/error",
+    "log_file": "path_to_file_or_empty_for_stdout",
     "load_balancer": {
         "backend_urls": ["http://host.docker.internal:8081", "http://host.docker.internal:8082"],
         "health_check_interval": 10,
@@ -128,7 +128,7 @@ status 204 no content
 ```
 All time is in seconds (can be decimal).
 
-if ```log_file``` is empty string stdout is used
+if ```log_file``` is an empty string then stdout is used
 
 ```max_retries``` number of retries for failed requests to backends
 
