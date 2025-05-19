@@ -91,6 +91,8 @@ func (rl *RateLimiterBucket) SaveStateInterval(ctx context.Context, wg *sync.Wai
 		case <-ticker.C:
 			rl.cache.SaveState(rl.DB)
 		case <-ctx.Done():
+			// save state before exit
+			rl.cache.SaveState(rl.DB)
 			rl.Log.Debug("Shutting down save state service")
 			return
 		}
